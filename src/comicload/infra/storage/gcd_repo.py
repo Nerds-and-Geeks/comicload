@@ -20,6 +20,18 @@ JOIN publisher p ON p.id = s.publisher_id
 # it is a query that failed to narrow anything down.
 _MAX_MATCHES = 25
 
+# The year filter runs in SQL so that LIMIT is applied to rows the scope already kept.
+# `on_sale_date` is free-form TEXT and may be NULL or unreadable, so the year comes from
+# the same parser that fills Issue.on_sale_date — registered on the connection below —
+# rather than from a second, subtly different notion of what a date is.
+#
+# NULL survives every bound on purpose: Scope.includes_year(None) is True because a
+# missing date is absence of evidence, not evidence of a mismatch.
+_YEAR_FUNCTION = "issue_year"
+_YEAR = f"{_YEAR_FUNCTION}(i.on_sale_date)"
+_YEAR_AT_LEAST = f"({_YEAR} IS NULL OR {_YEAR} >= ?)"
+_YEAR_AT_MOST = f"({_YEAR} IS NULL OR {_YEAR} <= ?)"
+
 
 def _parse_date(raw: str | None) -> date | None:
     if not raw:
@@ -28,6 +40,11 @@ def _parse_date(raw: str | None) -> date | None:
         return date.fromisoformat(raw[:10])
     except ValueError:
         return None
+
+
+def _year_of(raw: str | None) -> int | None:
+    parsed = _parse_date(raw)
+    return parsed.year if parsed else None
 
 
 @register_resolver("sqlite")
@@ -49,7 +66,9 @@ class SqliteIssueResolver:
             raise CatalogError(
                 f"no metadata catalogue at {self._db_path}; run 'comicload catalog sync' first"
             )
-        return sqlite3.connect(self._db_path)
+        conn = sqlite3.connect(self._db_path)
+        conn.create_function(_YEAR_FUNCTION, 1, _year_of, deterministic=True)
+        return conn
 
     def resolve(self, candidate: Candidate, scope: Scope) -> list[Issue]:
         query = Query(select=_SELECT, order_by="i.id", limit=_MAX_MATCHES)
@@ -67,6 +86,10 @@ class SqliteIssueResolver:
 
         if scope.publisher:
             query = query.where("p.name = ? COLLATE NOCASE", scope.publisher)
+        if scope.year_from is not None:
+            query = query.where(_YEAR_AT_LEAST, scope.year_from)
+        if scope.year_to is not None:
+            query = query.where(_YEAR_AT_MOST, scope.year_to)
 
         sql, params = query.build()
 
@@ -76,7 +99,7 @@ class SqliteIssueResolver:
         finally:
             conn.close()
 
-        issues = [
+        return [
             Issue(
                 gcd_id=row[0],
                 publisher=row[1],
@@ -86,9 +109,4 @@ class SqliteIssueResolver:
                 printing=candidate.printing,
             )
             for row in rows
-        ]
-        return [
-            issue
-            for issue in issues
-            if scope.includes_year(issue.on_sale_date.year if issue.on_sale_date else None)
         ]
