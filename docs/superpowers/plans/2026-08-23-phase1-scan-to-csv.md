@@ -3279,3 +3279,274 @@ Expected: lint, typecheck, and tests all pass
 git add Makefile CONTRIBUTING.md tests/test_dx.py
 git commit -m "chore: add Makefile and contributor guide for one-command setup"
 ```
+
+---
+
+### Task 14: Local catalogue storage
+
+**Runs after Task 10, before Task 11, so the CLI can wire `review` properly.**
+
+**Files:**
+- Create: `src/comicload/infra/storage/catalogue.py`
+- Test: `tests/infra/test_catalogue.py`
+
+**Interfaces:**
+- Consumes: `IdentifyResult`, `CatalogEntry`, `Bucket` (Task 2); `Repository` port (Task 3)
+- Produces: `SqliteRepository(db_path: Path)` implementing `Repository`; `CATALOGUE_SCHEMA`
+
+**Why a separate database from the GCD mirror.** `gcd.sqlite` is a disposable mirror —
+regenerated wholesale by `catalog sync`, potentially gigabytes, safe to delete. The user's
+scan results are the opposite: irreplaceable, small, worth backing up. They live in
+`comicload.sqlite`, obtained from `Config.catalogue_db_path()`.
+
+**Idempotency.** Photo ids are content hashes, so re-scanning the same folder must update
+rows rather than duplicate them. `save()` upserts on `photo_id`.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/infra/test_catalogue.py`:
+```python
+from datetime import date
+
+import pytest
+
+from comicload.core.models import Bucket, Candidate, CatalogEntry, IdentifyResult
+from comicload.infra.storage.catalogue import SqliteRepository
+
+ENTRY = CatalogEntry(
+    publisher_name="Marvel",
+    series_name="The Punisher",
+    full_title="The Punisher #12",
+    release_date=date(2001, 3, 1),
+    tags="comicload;photo=a.jpg;signal=barcode;conf=0.95",
+)
+CONFIDENT = IdentifyResult("p1", "a.jpg", Bucket.CONFIDENT, entry=ENTRY)
+AMBIGUOUS = IdentifyResult(
+    "p2",
+    "b.jpg",
+    Bucket.AMBIGUOUS,
+    candidates=(Candidate(signal="barcode", confidence=0.5, barcode="X1"),),
+)
+UNRECOGNIZED = IdentifyResult("p3", "c.jpg", Bucket.UNRECOGNIZED)
+
+
+@pytest.fixture
+def repo(tmp_path):
+    return SqliteRepository(tmp_path / "comicload.sqlite")
+
+
+def test_creates_database_on_first_save(tmp_path):
+    db = tmp_path / "nested" / "comicload.sqlite"
+    SqliteRepository(db).save([CONFIDENT])
+    assert db.exists()
+
+
+def test_confirmed_entries_returns_only_confident(repo):
+    repo.save([CONFIDENT, AMBIGUOUS, UNRECOGNIZED])
+    entries = repo.confirmed_entries()
+    assert entries == [ENTRY]
+
+
+def test_pending_review_excludes_confident(repo):
+    repo.save([CONFIDENT, AMBIGUOUS, UNRECOGNIZED])
+    pending = repo.pending_review()
+    assert {r.photo_id for r in pending} == {"p2", "p3"}
+
+
+def test_entry_roundtrips_including_release_date(repo):
+    repo.save([CONFIDENT])
+    assert repo.confirmed_entries()[0].release_date == date(2001, 3, 1)
+
+
+def test_candidates_roundtrip_for_review(repo):
+    repo.save([AMBIGUOUS])
+    pending = repo.pending_review()
+    assert pending[0].candidates[0].barcode == "X1"
+    assert pending[0].candidates[0].signal == "barcode"
+
+
+def test_rescanning_same_photo_updates_rather_than_duplicates(repo):
+    repo.save([AMBIGUOUS])
+    resolved = IdentifyResult("p2", "b.jpg", Bucket.CONFIDENT, entry=ENTRY)
+    repo.save([resolved])
+
+    assert repo.pending_review() == []
+    assert len(repo.confirmed_entries()) == 1
+
+
+def test_empty_database_returns_empty_lists(repo):
+    assert repo.pending_review() == []
+    assert repo.confirmed_entries() == []
+
+
+def test_saving_nothing_is_harmless(repo):
+    repo.save([])
+    assert repo.confirmed_entries() == []
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `.venv/bin/python -m pytest tests/infra/test_catalogue.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'comicload.infra.storage.catalogue'`
+
+- [ ] **Step 3: Write minimal implementation**
+
+`src/comicload/infra/storage/catalogue.py`:
+```python
+"""The user's own catalogue: scan outcomes and the review queue.
+
+Deliberately a separate database from the GCD mirror. `gcd.sqlite` is a disposable
+mirror rebuilt by `catalog sync`; this file holds the user's irreplaceable results.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+import sqlite3
+from collections.abc import Sequence
+from datetime import date
+from pathlib import Path
+from typing import Any
+
+from comicload.core.models import Bucket, Candidate, CatalogEntry, IdentifyResult
+
+CATALOGUE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS scan_result (
+    photo_id   TEXT PRIMARY KEY,
+    filename   TEXT NOT NULL,
+    bucket     TEXT NOT NULL,
+    entry      TEXT,
+    candidates TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_scan_result_bucket ON scan_result(bucket);
+"""
+
+
+def _entry_to_json(entry: CatalogEntry | None) -> str | None:
+    if entry is None:
+        return None
+    raw = dataclasses.asdict(entry)
+    if raw["release_date"] is not None:
+        raw["release_date"] = raw["release_date"].isoformat()
+    return json.dumps(raw)
+
+
+def _entry_from_json(blob: str | None) -> CatalogEntry | None:
+    if not blob:
+        return None
+    raw: dict[str, Any] = json.loads(blob)
+    if raw.get("release_date"):
+        raw["release_date"] = date.fromisoformat(raw["release_date"])
+    return CatalogEntry(**raw)
+
+
+def _candidates_to_json(candidates: Sequence[Candidate]) -> str:
+    return json.dumps([dataclasses.asdict(c) for c in candidates])
+
+
+def _candidates_from_json(blob: str) -> tuple[Candidate, ...]:
+    return tuple(Candidate(**raw) for raw in json.loads(blob or "[]"))
+
+
+class SqliteRepository:
+    """Stores identification outcomes so the review queue survives between runs."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = Path(db_path)
+
+    def _connect(self) -> sqlite3.Connection:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self._db_path)
+        conn.executescript(CATALOGUE_SCHEMA)
+        return conn
+
+    def save(self, results: Sequence[IdentifyResult]) -> None:
+        rows = [
+            (
+                result.photo_id,
+                result.filename,
+                result.bucket.value,
+                _entry_to_json(result.entry),
+                _candidates_to_json(result.candidates),
+            )
+            for result in results
+        ]
+        conn = self._connect()
+        try:
+            conn.executemany(
+                """
+                INSERT INTO scan_result (photo_id, filename, bucket, entry, candidates)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(photo_id) DO UPDATE SET
+                    filename   = excluded.filename,
+                    bucket     = excluded.bucket,
+                    entry      = excluded.entry,
+                    candidates = excluded.candidates
+                """,
+                rows,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _select(self, where: str, params: Sequence[str]) -> list[IdentifyResult]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT photo_id, filename, bucket, entry, candidates "
+                f"FROM scan_result WHERE {where} ORDER BY filename",
+                params,
+            ).fetchall()
+        finally:
+            conn.close()
+        return [
+            IdentifyResult(
+                photo_id=row[0],
+                filename=row[1],
+                bucket=Bucket(row[2]),
+                entry=_entry_from_json(row[3]),
+                candidates=_candidates_from_json(row[4]),
+            )
+            for row in rows
+        ]
+
+    def pending_review(self) -> list[IdentifyResult]:
+        return self._select("bucket != ?", [Bucket.CONFIDENT.value])
+
+    def confirmed_entries(self) -> list[CatalogEntry]:
+        results = self._select("bucket = ?", [Bucket.CONFIDENT.value])
+        return [r.entry for r in results if r.entry is not None]
+```
+
+Add to `src/comicload/infra/config.py`, inside `CatalogConfig`:
+
+```python
+class CatalogConfig(BaseModel):
+    gcd_db: str = ""
+    catalogue_db: str = ""
+```
+
+and to `Config`:
+
+```python
+    def catalogue_db_path(self) -> Path:
+        if self.catalog.catalogue_db:
+            return Path(self.catalog.catalogue_db).expanduser()
+        return user_data_path("comicload") / "comicload.sqlite"
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `.venv/bin/python -m pytest tests/infra/test_catalogue.py -v`
+Expected: PASS — 8 passed
+
+Then `make check`
+Expected: all green
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/comicload/infra/storage/catalogue.py src/comicload/infra/config.py tests/infra/test_catalogue.py
+git commit -m "feat(storage): persist scan results and review queue in local catalogue"
+```
