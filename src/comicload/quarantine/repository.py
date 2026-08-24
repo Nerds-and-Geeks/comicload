@@ -24,8 +24,22 @@ from comicload.models import Bucket, Candidate, CatalogEntry, IdentifyResult
 
 def _clean_entry_title(entry: CatalogEntry) -> CatalogEntry:
     """Clean LoCG title formatting on stored catalogue entries."""
-    series = entry.series_name.replace(" - The Deluxe Edition", " - Deluxe Edition").strip()
-    title = entry.full_title.replace(" - The Deluxe Edition", " - Deluxe Edition")
+    publisher = entry.publisher_name
+    if publisher == "DC":
+        publisher = "DC Comics"
+    elif publisher == "Marvel":
+        publisher = "Marvel Comics"
+
+    series = (
+        entry.series_name.replace(" - The Deluxe Edition", "")
+        .replace(" - Deluxe Edition", "")
+        .strip()
+    )
+    title = (
+        entry.full_title.replace(" - The Deluxe Edition", "")
+        .replace(" - Deluxe Edition", "")
+        .strip()
+    )
 
     # Strip printing suffixes like " 1st Printing"
     title = re.sub(r"\s+\d+(st|nd|rd|th)\s+Printing", "", title, flags=re.IGNORECASE)
@@ -34,12 +48,23 @@ def _clean_entry_title(entry: CatalogEntry) -> CatalogEntry:
     title = re.sub(r"\s*\(\d+\)", "", title)
 
     # Strip unnumbered trade "[nn]"
-    title = re.sub(r"\s*#?\[nn\]", "", title, flags=re.IGNORECASE)
+    is_trade = "[nn]" in title.lower() or "#" not in title
+    title = re.sub(r"\s*#?\[nn\]", "", title, flags=re.IGNORECASE).strip()
+
+    media_format = entry.media_format
+    if not media_format or media_format == "Comic":
+        if is_trade:
+            is_hc = "deluxe" in entry.series_name.lower() or "hc" in entry.series_name.lower()
+            media_format = "Hardcover" if is_hc else "Trade Paperback"
+        else:
+            media_format = "Comic"
 
     return dataclasses.replace(
         entry,
+        publisher_name=publisher,
         series_name=series,
-        full_title=title.strip(),
+        full_title=title,
+        media_format=media_format,
     )
 
 

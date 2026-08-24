@@ -12,10 +12,11 @@ from comicload.quarantine import repository as catalogue
 from comicload.quarantine.repository import MIGRATIONS, SCHEMA_VERSION, SqliteRepository
 
 ENTRY = CatalogEntry(
-    publisher_name="Marvel",
+    publisher_name="Marvel Comics",
     series_name="The Punisher",
     full_title="The Punisher #12",
     release_date=date(2001, 3, 1),
+    media_format="Comic",
     tags="comicload;photo=a.jpg;signal=barcode;conf=0.95",
 )
 CONFIDENT = IdentifyResult("p1", "a.jpg", Bucket.CONFIDENT, entry=ENTRY)
@@ -97,7 +98,8 @@ def test_confirmed_entries_cleans_stored_titles(repo: SqliteRepository):
     repo.save([IdentifyResult("p10", "old.jpg", Bucket.CONFIDENT, entry=old_entry)])
     entries = repo.confirmed_entries()
     assert entries[0].full_title == "Supergirl #2"
-    assert entries[0].series_name == "Supergirl: Woman of Tomorrow - Deluxe Edition"
+    assert entries[0].series_name == "Supergirl: Woman of Tomorrow"
+    assert entries[0].publisher_name == "DC Comics"
 
 
 def test_pending_review_excludes_confident(repo):
