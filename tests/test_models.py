@@ -62,13 +62,19 @@ def test_issue_to_catalog_entry_builds_full_title():
         printing="2nd Printing",
     )
     entry = issue.to_catalog_entry()
-    assert entry.full_title == "Alex + Ada #2 2nd Printing"
+    assert entry.full_title == "Alex + Ada #2"
     assert entry.release_date == date(2013, 12, 11)
 
 
-def test_issue_to_catalog_entry_omits_printing_when_absent():
-    issue = Issue(gcd_id=2, publisher="Marvel", series="The Punisher", issue_number="12")
-    assert issue.to_catalog_entry().full_title == "The Punisher #12"
+def test_issue_to_catalog_entry_omits_printing_and_strips_nn():
+    issue1 = Issue(gcd_id=2, publisher="Marvel", series="The Punisher", issue_number="12")
+    assert issue1.to_catalog_entry().full_title == "The Punisher #12"
+
+    trade = Issue(gcd_id=3, publisher="DC", series="Superman: Brainiac", issue_number="[nn]")
+    assert trade.to_catalog_entry().full_title == "Superman: Brainiac"
+
+    legacy = Issue(gcd_id=4, publisher="DC", series="Superman", issue_number="20 (863)")
+    assert legacy.to_catalog_entry().full_title == "Superman #20"
 
 
 def test_import_result_reports_counts():

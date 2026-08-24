@@ -245,5 +245,5 @@ def test_a_candidates_printing_reaches_the_full_title(tmp_path):
 
     assert result.bucket is Bucket.CONFIDENT
     assert result.entry is not None
-    assert result.entry.full_title == "Alex + Ada #2 2nd Printing"
+    assert result.entry.full_title == "Alex + Ada #2"
     assert result.entry.notes == "2nd Printing"
