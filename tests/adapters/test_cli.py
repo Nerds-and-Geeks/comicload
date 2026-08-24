@@ -5,7 +5,8 @@ from typer.testing import CliRunner
 import comicload.adapters.cli.app as app_module
 from comicload.adapters.cli.app import app
 from comicload.core.errors import ComicloadError
-from comicload.infra.sinks.csv_sink import COLUMNS
+from comicload.core.models import Candidate
+from comicload.infra.sinks.csv_sink import COLUMNS, read_csv
 from comicload.infra.storage.catalogue import SqliteRepository
 
 runner = CliRunner()
@@ -41,7 +42,19 @@ def test_scan_on_empty_folder_writes_header_only_csv(tmp_path):
     db = tmp_path / "gcd.sqlite"
     runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(db)])
 
-    result = runner.invoke(app, ["scan", str(photos), "--out", str(out), "--db", str(db)])
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            str(photos),
+            "--out",
+            str(out),
+            "--db",
+            str(db),
+            "--catalogue-db",
+            str(tmp_path / "comicload.sqlite"),
+        ],
+    )
 
     assert result.exit_code == 0
     assert out.read_text().strip() == ",".join(COLUMNS)
@@ -214,8 +227,68 @@ def test_scan_reports_a_missing_native_library_instead_of_a_clean_tally(tmp_path
     runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(gcd_db)])
 
     result = runner.invoke(
-        app, ["scan", str(photos), "--out", str(tmp_path / "out.csv"), "--db", str(gcd_db)]
+        app,
+        [
+            "scan",
+            str(photos),
+            "--out",
+            str(tmp_path / "out.csv"),
+            "--db",
+            str(gcd_db),
+            "--catalogue-db",
+            str(tmp_path / "comicload.sqlite"),
+        ],
     )
 
     assert result.exit_code != 0
     assert "brew install zbar" in result.stdout
+
+
+# --- the CSV must not lose the last box of comics ----------------------------
+
+
+class _CataloguedSignal:
+    """Recognises the two issues in the sample dump, one per filename."""
+
+    name = "barcode"
+    BARCODES = {
+        "punisher.jpg": "75960608457000111",
+        "alexada.jpg": "70985301491000211",
+    }
+
+    def identify(self, photo, scope):
+        barcode = self.BARCODES.get(photo.filename)
+        if barcode is None:
+            return []
+        return [Candidate(signal="barcode", confidence=0.95, barcode=barcode)]
+
+
+def test_scanning_a_second_folder_keeps_the_first_folder_in_the_csv(tmp_path, monkeypatch):
+    """CsvSink opens 'w': a second scan used to overwrite the first box of comics."""
+    monkeypatch.setattr(app_module, "get_signal", lambda name, **kw: _CataloguedSignal())
+    gcd_db = tmp_path / "gcd.sqlite"
+    catalogue_db = tmp_path / "comicload.sqlite"
+    out = tmp_path / "collection.csv"
+    runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(gcd_db)])
+
+    for folder_name, photo_name in (("box_a", "punisher.jpg"), ("box_b", "alexada.jpg")):
+        folder = tmp_path / folder_name
+        folder.mkdir()
+        (folder / photo_name).write_bytes(photo_name.encode())
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                str(folder),
+                "--out",
+                str(out),
+                "--db",
+                str(gcd_db),
+                "--catalogue-db",
+                str(catalogue_db),
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+
+    titles = {entry.full_title for entry in read_csv(out)}
+    assert titles == {"The Punisher #12", "Alex + Ada #2"}

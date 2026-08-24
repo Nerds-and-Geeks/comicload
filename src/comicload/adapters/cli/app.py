@@ -120,13 +120,18 @@ def scan(
     except ComicloadError as exc:
         raise _fail(str(exc)) from exc
 
-    if results:
-        open_repository(catalogue).save(results)
+    # Save first, then export what the catalogue holds. The CSV is rewritten whole, so
+    # exporting only this run's results would replace the last box of comics with this one.
+    repository = open_repository(catalogue)
+    repository.save(results)
 
     console.print(summary_table(results))
     _report_signal_failures(results)
 
-    result = ExportService(CsvSink(out)).export(results)
+    try:
+        result = ExportService(CsvSink(out)).export_entries(repository.confirmed_entries())
+    except ComicloadError as exc:
+        raise _fail(str(exc)) from exc
     console.print(import_panel(result))
 
     pending = [r for r in results if r.bucket is not Bucket.CONFIDENT]
