@@ -175,7 +175,7 @@ Because collection era is unknown, no single signal can be primary.
 
 | Signal | Strength | Weakness |
 |---|---|---|
-| **Barcode** | Near-exact when present. UPC-A + EAN-5 supplement encodes issue number and often printing. Free, no ML. | Absent pre-~1975. Supplement scheme differs per publisher. |
+| **Barcode** | Near-exact when present. GCD stores barcodes, so the decoded string is matched **directly against GCD's barcode column** — no scheme decoding on the happy path. Free, no ML. | Absent pre-~1975. Falls back to UPC-supplement decoding (publisher-specific, low confidence) when the exact barcode is not in GCD. |
 | **OCR** | Works on any era. Reads masthead, issue number, price/date corner, publisher mark. | Struggles on distressed/arced/art-occluded logos. |
 | **Cover match** | Works when text fails entirely. | Needs a scoped image index; licensing unresolved. |
 
@@ -333,20 +333,28 @@ secret_name = "comicload/anthropic"   # NAME only — value lives in the keychai
 
 ## CLI
 
-```bash
-comicload config locg                    # headed browser login, store session
-comicload config                         # other settings, interactive
-comicload catalog sync                   # download + load GCD dump
+Two verbs, two directions. `scan` produces a CSV from photos; `import` consumes a CSV into LoCG.
 
-comicload import ./photos \
+```bash
+# setup
+comicload config                         # interactive settings
+comicload config locg                    # headed browser login, store session
+comicload config keys                    # API keys → OS keychain
+comicload catalog sync <dump-path>       # load GCD dump into local SQLite
+
+# photos → CSV
+comicload scan ./photos \
     --publisher marvel \
     --years 1970-1985 \
-    --out collection.csv \
-    --import-locg                        # optional: push to LoCG
+    --out collection.csv
 comicload review                         # work the ambiguous/unrecognized queue
+
+# CSV → LoCG
+comicload import collection.csv                 # validate + preview, no upload
+comicload import collection.csv --import-locg   # upload, then print view URL
 ```
 
-Naming note for review: `import` currently means both "photos in" and (via `--import-locg`) "CSV out". `scan` + `--push-locg` reads less ambiguously. Deferred to user preference.
+`import` without `--import-locg` validates the CSV against the 14-column schema and prints what would be pushed. The flag makes it real. This keeps the destructive path explicitly opt-in and gives a local dry-run that needs no network or session.
 
 ---
 
