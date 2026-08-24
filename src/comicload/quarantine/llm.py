@@ -9,9 +9,13 @@ or unparseable response.
 from __future__ import annotations
 
 import base64
+import io
 import json
+import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
+
+from PIL import Image
 
 if TYPE_CHECKING:
     from comicload.config import LlmConfig
@@ -23,6 +27,16 @@ PROMPT = (
     "Title #Issue Year (e.g. 'Superman #35 2024' or 'Alex + Ada #2'). "
     "If unreadable or unknown, respond with nothing."
 )
+
+
+def _prepare_image_for_llm(image_bytes: bytes) -> tuple[bytes, str]:
+    """Ensure image is formatted as a valid JPEG under 1560px for vision API constraints."""
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    if max(img.width, img.height) > 1560:
+        img.thumbnail((1560, 1560), Image.Resampling.BILINEAR)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return buf.getvalue(), "image/jpeg"
 
 
 def describe_cover(image_bytes: bytes | None, config: LlmConfig) -> tuple[str, str | None]:
@@ -45,21 +59,25 @@ def describe_cover(image_bytes: bytes | None, config: LlmConfig) -> tuple[str, s
         return "", f"No API key found. Set {env_var} environment variable."
 
     try:
+        prepared_bytes, mime_type = _prepare_image_for_llm(image_bytes)
         if config.provider == "anthropic":
-            return _call_anthropic(image_bytes, config, api_key), None
+            return _call_anthropic(prepared_bytes, mime_type, config, api_key), None
         elif config.provider == "openai":
-            return _call_openai(image_bytes, config, api_key), None
+            return _call_openai(prepared_bytes, mime_type, config, api_key), None
     except urllib.error.HTTPError as exc:
-        return "", f"HTTP Error {exc.code}: {exc.reason}"
+        body = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else ""
+        error_detail = (
+            json.loads(body).get("error", {}).get("message", body) if body else exc.reason
+        )
+        return "", f"HTTP Error {exc.code}: {error_detail}"
     except Exception as exc:
         return "", f"API Error: {exc}"
 
     return "", "Unsupported LLM provider"
 
 
-def _call_anthropic(image_bytes: bytes, config: LlmConfig, api_key: str) -> str:
+def _call_anthropic(image_bytes: bytes, mime_type: str, config: LlmConfig, api_key: str) -> str:
     b64_image = base64.b64encode(image_bytes).decode("ascii")
-    mime_type = "image/png" if image_bytes.startswith(b"\x89PNG") else "image/jpeg"
 
     payload = {
         "model": config.model or "claude-3-5-sonnet-20241022",
@@ -99,9 +117,8 @@ def _call_anthropic(image_bytes: bytes, config: LlmConfig, api_key: str) -> str:
         return text
 
 
-def _call_openai(image_bytes: bytes, config: LlmConfig, api_key: str) -> str:
+def _call_openai(image_bytes: bytes, mime_type: str, config: LlmConfig, api_key: str) -> str:
     b64_image = base64.b64encode(image_bytes).decode("ascii")
-    mime_type = "image/png" if image_bytes.startswith(b"\x89PNG") else "image/jpeg"
 
     payload = {
         "model": config.model or "gpt-4o",

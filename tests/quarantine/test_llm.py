@@ -1,8 +1,17 @@
+import io
 import json
 from unittest.mock import MagicMock
 
+from PIL import Image
+
 from comicload.config import LlmConfig
 from comicload.quarantine.llm import describe_cover
+
+
+def _valid_image_bytes() -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (10, 10), color="red").save(buf, format="JPEG")
+    return buf.getvalue()
 
 
 def test_describe_cover_returns_empty_when_no_image():
@@ -18,7 +27,7 @@ def test_describe_cover_returns_empty_when_no_api_key(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     config = LlmConfig(enabled=True, api_key="")
-    query, err = describe_cover(b"pixels", config)
+    query, err = describe_cover(_valid_image_bytes(), config)
     assert query == ""
     assert "No API key found" in (err or "")
 
@@ -40,7 +49,7 @@ def test_describe_cover_anthropic_provider(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
 
-    query, err = describe_cover(b"png_pixels", config)
+    query, err = describe_cover(_valid_image_bytes(), config)
 
     assert query == "Superman #35 2024"
     assert err is None
@@ -65,7 +74,7 @@ def test_describe_cover_openai_provider(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
 
-    query, err = describe_cover(b"jpg_pixels", config)
+    query, err = describe_cover(_valid_image_bytes(), config)
 
     assert query == "Alex + Ada #2"
     assert err is None
@@ -81,6 +90,6 @@ def test_describe_cover_fails_closed_on_network_error(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
 
-    query, err = describe_cover(b"pixels", config)
+    query, err = describe_cover(_valid_image_bytes(), config)
     assert query == ""
     assert err is not None
