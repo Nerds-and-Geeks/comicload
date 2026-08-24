@@ -82,7 +82,11 @@ class IdentifyService:
                 continue
             resolved_any = True
             if len(issues) == 1 and candidate.confidence >= self._threshold:
-                entry = issues[0].to_catalog_entry()
+                # The catalogue knows the issue; only the candidate knows which printing
+                # was photographed. Fusing them is this service's job, and the full title
+                # is still formed in exactly one place: Issue.to_catalog_entry().
+                issue = dataclasses.replace(issues[0], printing=candidate.printing)
+                entry = issue.to_catalog_entry()
                 entry = dataclasses.replace(
                     entry,
                     notes=candidate.printing or "",

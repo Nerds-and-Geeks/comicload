@@ -214,3 +214,37 @@ def test_resolution_falls_back_from_the_concatenated_barcode_to_the_bare_upc():
     assert result.bucket is Bucket.CONFIDENT
     assert result.entry is not None
     assert result.entry.notes == "1st Printing", "the supplement hint must survive the fallback"
+
+
+# --- the printing a signal read off the cover must reach the exported title -----
+
+
+def test_a_candidates_printing_reaches_the_full_title(tmp_path):
+    """End to end over the real catalogue: the printing is not in the database, so it
+    can only reach the title by IdentifyService putting it there."""
+    from pathlib import Path
+
+    from comicload.infra.storage.gcd_loader import load_dump
+    from comicload.infra.storage.gcd_repo import SqliteIssueResolver
+
+    db = tmp_path / "gcd.sqlite"
+    load_dump(Path("tests/fixtures/gcd_sample.sql"), db)
+
+    candidate = Candidate(
+        signal="ocr",
+        confidence=0.95,
+        series="Alex + Ada",
+        issue_number="2",
+        printing="2nd Printing",
+    )
+    service = IdentifyService(
+        signals=[StubSignal("ocr", [candidate])],
+        resolver=SqliteIssueResolver(db),
+    )
+
+    result = service.run(StubSource([PHOTO]), Scope())[0]
+
+    assert result.bucket is Bucket.CONFIDENT
+    assert result.entry is not None
+    assert result.entry.full_title == "Alex + Ada #2 2nd Printing"
+    assert result.entry.notes == "2nd Printing"

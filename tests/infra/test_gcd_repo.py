@@ -1,5 +1,6 @@
 """The resolver's own tests: what SQL it asks for, and how it reads the answer back."""
 
+import dataclasses
 import sqlite3
 from datetime import date
 
@@ -202,3 +203,15 @@ def test_a_missing_database_is_reported_when_it_is_used(tmp_path):
 
     with pytest.raises(CatalogError, match="catalog sync"):
         resolver.resolve(CANDIDATE, Scope())
+
+
+# --- the resolver reports the catalogue, not its own input ---------------------
+
+
+def test_resolve_reports_the_printing_the_database_holds(one_issue):
+    """Copying the candidate's printing onto the result is a fusion decision, and
+    fusion belongs to IdentifyService — a data-access method must not answer with
+    something it was merely handed."""
+    candidate = dataclasses.replace(CANDIDATE, printing="2nd Printing")
+
+    assert one_issue.resolve(candidate, Scope())[0].printing is None

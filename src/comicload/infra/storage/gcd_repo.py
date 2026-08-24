@@ -62,6 +62,10 @@ class SqliteIssueResolver:
 
     Barcode match is exact and preferred. Series/issue match is the fallback.
 
+    An Issue reports what the catalogue holds and nothing else. What a signal read off
+    the cover — the printing, in particular — is the candidate's, and combining the two
+    is IdentifyService's decision to make, not a data-access method's.
+
     One resolver holds one connection, opened on first use and reused for every photo
     after it: a 500-photo scan is one open and one existence check, not 500 of each.
     Close it with `close()`, or use the resolver as a context manager.
@@ -139,7 +143,6 @@ class SqliteIssueResolver:
                 series=row["series_name"],
                 issue_number=row["issue_number"],
                 on_sale_date=_parse_date(row["on_sale_date"]),
-                printing=candidate.printing,
             )
             for row in rows
         ]
