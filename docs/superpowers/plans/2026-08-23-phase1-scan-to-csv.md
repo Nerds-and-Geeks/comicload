@@ -3302,6 +3302,17 @@ scan results are the opposite: irreplaceable, small, worth backing up. They live
 **Idempotency.** Photo ids are content hashes, so re-scanning the same folder must update
 rows rather than duplicate them. `save()` upserts on `photo_id`.
 
+**Migrations are required here and only here.** `gcd.sqlite` is regenerable — a schema change
+is handled by re-running `catalog sync`. `comicload.sqlite` holds data the user cannot rebuild,
+so `CREATE TABLE IF NOT EXISTS` is not a sufficient migration story: the first added column
+would break existing databases. Use SQLite's built-in `PRAGMA user_version` as the schema
+stamp and apply migrations stepwise. No dependency, no ORM — roughly twenty lines.
+
+**No ORM, deliberately.** Three read-only GCD tables and one catalogue table do not justify
+one, the bulk loader would bypass it regardless, and the Postgres-later path is served by
+writing a new adapter behind the existing `Repository` port rather than by reconfiguring a
+mapper. Revisit only if the storyline feature's arc tables introduce cross-catalog joins.
+
 - [ ] **Step 1: Write the failing test**
 
 `tests/infra/test_catalogue.py`:
@@ -3382,6 +3393,51 @@ def test_empty_database_returns_empty_lists(repo):
 def test_saving_nothing_is_harmless(repo):
     repo.save([])
     assert repo.confirmed_entries() == []
+
+
+def test_new_database_is_stamped_with_current_schema_version(tmp_path):
+    import sqlite3
+
+    from comicload.infra.storage.catalogue import SCHEMA_VERSION
+
+    db = tmp_path / "comicload.sqlite"
+    SqliteRepository(db).save([])
+    version = sqlite3.connect(db).execute("PRAGMA user_version").fetchone()[0]
+    assert version == SCHEMA_VERSION
+
+
+def test_existing_data_survives_reopening(tmp_path):
+    """Opening an already-migrated database must not reset or drop anything."""
+    db = tmp_path / "comicload.sqlite"
+    SqliteRepository(db).save([CONFIDENT])
+    assert SqliteRepository(db).confirmed_entries() == [ENTRY]
+
+
+def test_migration_from_version_zero_is_applied(tmp_path):
+    """A pre-versioned database is migrated up, not wiped."""
+    import sqlite3
+
+    from comicload.infra.storage.catalogue import SCHEMA_VERSION
+
+    db = tmp_path / "legacy.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE scan_result ("
+        "photo_id TEXT PRIMARY KEY, filename TEXT NOT NULL, bucket TEXT NOT NULL,"
+        "entry TEXT, candidates TEXT NOT NULL DEFAULT '[]');"
+    )
+    conn.execute(
+        "INSERT INTO scan_result VALUES ('p9', 'old.jpg', 'unrecognized', NULL, '[]')"
+    )
+    conn.commit()
+    conn.close()
+
+    repo = SqliteRepository(db)
+    pending = repo.pending_review()
+
+    assert [r.photo_id for r in pending] == ["p9"], "existing row was lost during migration"
+    version = sqlite3.connect(db).execute("PRAGMA user_version").fetchone()[0]
+    assert version == SCHEMA_VERSION
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -3411,16 +3467,37 @@ from typing import Any
 
 from comicload.core.models import Bucket, Candidate, CatalogEntry, IdentifyResult
 
-CATALOGUE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS scan_result (
-    photo_id   TEXT PRIMARY KEY,
-    filename   TEXT NOT NULL,
-    bucket     TEXT NOT NULL,
-    entry      TEXT,
-    candidates TEXT NOT NULL DEFAULT '[]'
-);
-CREATE INDEX IF NOT EXISTS idx_scan_result_bucket ON scan_result(bucket);
-"""
+SCHEMA_VERSION = 1
+
+# Index = target version. MIGRATIONS[0] takes an empty or pre-versioned database to
+# version 1. To evolve the schema, append a new script and bump SCHEMA_VERSION —
+# never edit an existing entry, since users have already run it.
+MIGRATIONS: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS scan_result (
+        photo_id   TEXT PRIMARY KEY,
+        filename   TEXT NOT NULL,
+        bucket     TEXT NOT NULL,
+        entry      TEXT,
+        candidates TEXT NOT NULL DEFAULT '[]'
+    );
+    CREATE INDEX IF NOT EXISTS idx_scan_result_bucket ON scan_result(bucket);
+    """,
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring a database up to SCHEMA_VERSION, preserving existing rows.
+
+    The user's catalogue cannot be regenerated, so schema changes must migrate
+    rather than recreate. SQLite's user_version pragma is the stamp.
+    """
+    current: int = conn.execute("PRAGMA user_version").fetchone()[0]
+    for version in range(current, SCHEMA_VERSION):
+        conn.executescript(MIGRATIONS[version])
+    if current < SCHEMA_VERSION:
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.commit()
 
 
 def _entry_to_json(entry: CatalogEntry | None) -> str | None:
@@ -3458,7 +3535,7 @@ class SqliteRepository:
     def _connect(self) -> sqlite3.Connection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self._db_path)
-        conn.executescript(CATALOGUE_SCHEMA)
+        _migrate(conn)
         return conn
 
     def save(self, results: Sequence[IdentifyResult]) -> None:
