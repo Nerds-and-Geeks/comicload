@@ -12,6 +12,7 @@ import comicload.infra.signals  # noqa: F401  (registers signals)
 import comicload.infra.sinks  # noqa: F401  (registers sinks)
 from comicload.adapters.cli.progress import RichProgressReporter
 from comicload.adapters.cli.render import console, import_panel, review_table, summary_table
+from comicload.adapters.cli.wiring import get_default_barcode_decoder
 from comicload.core.errors import ComicloadError
 from comicload.core.models import Bucket, IdentifyResult, Scope
 from comicload.core.registry import get_signal
@@ -110,7 +111,12 @@ def scan(
         raise _fail(str(exc)) from exc
 
     try:
-        signals = [get_signal(name) for name in config.signals.enabled]
+        signals = [
+            get_signal(name, decoder=get_default_barcode_decoder())
+            if name == "barcode"
+            else get_signal(name)
+            for name in config.signals.enabled
+        ]
     except KeyError as exc:
         raise _fail(
             f"{exc.args[0]}\nEdit 'signals.enabled' in your settings "

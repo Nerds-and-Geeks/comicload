@@ -307,3 +307,33 @@ def test_an_unknown_signal_name_is_a_message_not_a_traceback(tmp_path, monkeypat
     assert result.exit_code != 0
     assert "telepathy" in result.stdout
     assert "signals.enabled" in result.stdout
+
+
+def test_scan_wires_a_real_decoder_into_the_barcode_signal(tmp_path, monkeypatch):
+    """A bare get_signal("barcode") leaves decoder=None: every test passes on stubs
+    while every production scan fails on every photo. The CLI must inject the decoder."""
+    from comicload.adapters.cli import app as app_module
+
+    seen = {}
+
+    def fake_decoder_factory():
+        def decoder(image_bytes):
+            seen["called"] = True
+            return []
+
+        return decoder
+
+    monkeypatch.setattr(app_module, "get_default_barcode_decoder", fake_decoder_factory)
+
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    (photos / "a.jpg").write_bytes(b"fake image bytes")
+    db = tmp_path / "gcd.sqlite"
+    runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(db)])
+
+    result = runner.invoke(
+        app, ["scan", str(photos), "--out", str(tmp_path / "o.csv"), "--db", str(db)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen.get("called"), "scan ran without the wired decoder ever being used"
