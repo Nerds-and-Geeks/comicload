@@ -485,7 +485,13 @@ def test_scan_fails_clearly_when_no_dump_is_known(tmp_path, monkeypatch):
 
 
 def test_catalog_sync_remembers_the_dump_for_scan_to_reuse(tmp_path, monkeypatch):
+    # storage.catalog_db must be set, or a fresh Config() falls back to
+    # gcd_db_path()'s real default — which is the user's actual database, not a
+    # test fixture. This test overwrote it with a 2-row fixture until caught.
     config_path = tmp_path / "config.toml"
+    config = load_config(config_path)
+    config.storage.catalog_db = str(tmp_path / "gcd.sqlite")
+    save_config(config, config_path)
     monkeypatch.setattr(app_module, "load_config", lambda *args, **kwargs: load_config(config_path))
     monkeypatch.setattr(
         app_module, "save_config", lambda cfg, *a, **kw: save_config(cfg, config_path)
