@@ -77,12 +77,14 @@ def import_panel(result: ImportResult) -> Panel:
 def cover_lines(image_bytes: bytes, width: int = 42) -> str:
     """Render cover pixels for the terminal.
 
-    iTerm2-compatible terminals get the real image inline (OSC 1337). Everything
-    else gets a half-block ANSI mosaic — two pixels per character cell using ▀ with
-    truecolor foreground and background — which is recognisable enough to identify
-    a cover in any terminal, including VS Code's.
+    iTerm2, VS Code, WezTerm, and compatible terminals get the real image inline (OSC 1337).
+    Everything else gets a half-block ANSI mosaic — two pixels per character cell using ▀
+    with truecolor foreground and background — which is recognisable enough to identify
+    a cover in any terminal.
     """
-    if os.environ.get("TERM_PROGRAM") == "iTerm.app" or os.environ.get("LC_TERMINAL") == "iTerm2":
+    term = os.environ.get("TERM_PROGRAM", "")
+    lc_term = os.environ.get("LC_TERMINAL", "")
+    if term in ("iTerm.app", "WezTerm", "vscode") or lc_term == "iTerm2":
         payload = base64.b64encode(image_bytes).decode("ascii")
         return f"\033]1337;File=inline=1;width={width};preserveAspectRatio=1:{payload}\a"
 
@@ -109,9 +111,8 @@ def open_cover_image(image_bytes: bytes, filename: str) -> None:
     import contextlib
     import subprocess
     import tempfile
-    from pathlib import Path
 
-    suffix = Path(filename).suffix or ".jpg"
+    suffix = ".png" if image_bytes.startswith(b"\x89PNG") else ".jpg"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(image_bytes)
         tmp_path = tmp.name
