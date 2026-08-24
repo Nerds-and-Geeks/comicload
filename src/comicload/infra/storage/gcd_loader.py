@@ -36,7 +36,7 @@ from pathlib import Path
 
 from comicload.core.errors import CatalogError
 
-SCHEMA = """
+TABLES_SCHEMA = """
 DROP TABLE IF EXISTS issue;
 DROP TABLE IF EXISTS series;
 DROP TABLE IF EXISTS publisher;
@@ -55,12 +55,17 @@ CREATE TABLE issue (
     on_sale_date TEXT,
     barcode TEXT
 );
+"""
+
+INDEXES = """
 CREATE INDEX idx_issue_barcode ON issue(barcode);
 CREATE INDEX idx_series_name ON series(name COLLATE NOCASE);
 CREATE INDEX idx_issue_series ON issue(series_id);
 CREATE INDEX idx_series_publisher ON series(publisher_id);
 CREATE INDEX idx_publisher_name ON publisher(name COLLATE NOCASE);
 """
+
+SCHEMA = TABLES_SCHEMA + INDEXES
 
 # Which dump table feeds which local table, and which columns we need *by name*.
 # The names on the right are the dump's; their order here matches the column order of
@@ -387,7 +392,12 @@ def load_dump(
     scratch = db_path.with_name(db_path.name + ".syncing")
     conn = sqlite3.connect(scratch)
     try:
-        conn.executescript(SCHEMA)
+        conn.execute("PRAGMA synchronous = OFF")
+        conn.execute("PRAGMA journal_mode = OFF")
+        conn.execute("PRAGMA cache_size = -64000")
+        conn.execute("PRAGMA temp_store = MEMORY")
+
+        conn.executescript(TABLES_SCHEMA)
         counts = {local: 0 for local, _ in TABLE_MAP.values()}
         declared: dict[str, list[str]] = {}
 
@@ -431,6 +441,7 @@ def load_dump(
             if on_progress:
                 on_progress(len(rows))
 
+        conn.executescript(INDEXES)
         _check_join(conn, counts)
         conn.commit()
     except BaseException:
