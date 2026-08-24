@@ -142,6 +142,97 @@ def test_scan_persists_results_to_the_catalogue(tmp_path, monkeypatch):
     assert [r.filename for r in pending] == ["a.jpg"]
 
 
+def test_scan_clears_previous_quarantine_by_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "get_signal", lambda name, **kw: _BlindSignal())
+    gcd_db = tmp_path / "gcd.sqlite"
+    catalogue_db = tmp_path / "comicload.sqlite"
+    runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(gcd_db)])
+
+    # First run: scan folder 1
+    folder1 = tmp_path / "folder1"
+    folder1.mkdir()
+    (folder1 / "one.jpg").write_bytes(b"photo 1")
+    runner.invoke(
+        app,
+        [
+            "scan",
+            str(folder1),
+            "--out",
+            str(tmp_path / "out.csv"),
+            "--db",
+            str(gcd_db),
+            "--catalogue-db",
+            str(catalogue_db),
+        ],
+    )
+    assert [r.filename for r in SqliteRepository(catalogue_db).pending_review()] == ["one.jpg"]
+
+    # Second run: scan folder 2 without --save-old-run
+    folder2 = tmp_path / "folder2"
+    folder2.mkdir()
+    (folder2 / "two.jpg").write_bytes(b"photo 2")
+    runner.invoke(
+        app,
+        [
+            "scan",
+            str(folder2),
+            "--out",
+            str(tmp_path / "out.csv"),
+            "--db",
+            str(gcd_db),
+            "--catalogue-db",
+            str(catalogue_db),
+        ],
+    )
+    assert [r.filename for r in SqliteRepository(catalogue_db).pending_review()] == ["two.jpg"]
+
+
+def test_scan_save_old_run_preserves_previous_results(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "get_signal", lambda name, **kw: _BlindSignal())
+    gcd_db = tmp_path / "gcd.sqlite"
+    catalogue_db = tmp_path / "comicload.sqlite"
+    runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(gcd_db)])
+
+    folder1 = tmp_path / "folder1"
+    folder1.mkdir()
+    (folder1 / "one.jpg").write_bytes(b"photo 1")
+    runner.invoke(
+        app,
+        [
+            "scan",
+            str(folder1),
+            "--out",
+            str(tmp_path / "out.csv"),
+            "--db",
+            str(gcd_db),
+            "--catalogue-db",
+            str(catalogue_db),
+        ],
+    )
+
+    folder2 = tmp_path / "folder2"
+    folder2.mkdir()
+    (folder2 / "two.jpg").write_bytes(b"photo 2")
+    runner.invoke(
+        app,
+        [
+            "scan",
+            str(folder2),
+            "--save-old-run",
+            "--out",
+            str(tmp_path / "out.csv"),
+            "--db",
+            str(gcd_db),
+            "--catalogue-db",
+            str(catalogue_db),
+        ],
+    )
+    assert sorted(r.filename for r in SqliteRepository(catalogue_db).pending_review()) == [
+        "one.jpg",
+        "two.jpg",
+    ]
+
+
 def test_review_walks_the_quarantine_and_quits_cleanly(tmp_path, monkeypatch):
     _, gcd_db, catalogue_db = _scan_one_unreadable_photo(tmp_path, monkeypatch)
 

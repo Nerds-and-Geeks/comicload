@@ -70,6 +70,10 @@ class Repository(Protocol):
 
     def confirmed_entries(self) -> list[CatalogEntry]: ...
 
+    def clear(self) -> None: ...
+
+    def clear_pending(self) -> None: ...
+
 
 @runtime_checkable
 class ProgressReporter(Protocol):

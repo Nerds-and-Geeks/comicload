@@ -218,6 +218,31 @@ class SqliteRepository:
             for row in rows
         ]
 
+    def clear(self) -> None:
+        """Clear all scan results and quarantine entries."""
+        if not self._db_path.exists():
+            return
+        conn = self._connect(create=True)
+        try:
+            conn.execute("DELETE FROM scan_result")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def clear_pending(self) -> None:
+        """Clear unconfirmed/quarantined scan results from previous runs."""
+        if not self._db_path.exists():
+            return
+        conn = self._connect(create=True)
+        try:
+            conn.execute(
+                "DELETE FROM scan_result WHERE bucket != ?",
+                (Bucket.CONFIDENT.value,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def pending_review(self) -> list[IdentifyResult]:
         return self._select("bucket != ?", [Bucket.CONFIDENT.value])
 

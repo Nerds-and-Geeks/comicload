@@ -80,6 +80,9 @@ def scan(
         Path | None,
         typer.Option("--catalogue-db", help="Path of your catalogue of scan results."),
     ] = None,
+    save_old_run: Annotated[
+        bool, typer.Option("--save-old-run", help="Preserve quarantine items from previous scans.")
+    ] = False,
 ) -> None:
     """Identify every comic photo in a folder and write an import file."""
     config = load_config()
@@ -133,6 +136,8 @@ def scan(
         raise _fail(str(exc)) from exc
 
     repository = SqliteRepository(catalogue_path)
+    if not save_old_run:
+        repository.clear_pending()
     repository.save(results)
 
     console.print(summary_table(results))
