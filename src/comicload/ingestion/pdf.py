@@ -11,9 +11,13 @@ import pymupdf
 
 from comicload.errors import ComicloadError
 
-# 2.5x scale ≈ 180 DPI. Extremely fast rendering and lightweight memory while
-# remaining sharp enough for the main UPC and small EAN-5 supplement barcodes.
-_RENDER_SCALE = 2.5
+# 6x scale ≈ 432 DPI. Verified against a real scan: at 2.5x (≈180 DPI) the main
+# UPC still read fine but the EAN-5 supplement — which tells one issue of a series
+# from another when the publisher reuses a single UPC — was unreadable on every
+# page tested, 0 of 6. 6x recovered all of them. Costs real time and memory over
+# 2.5x, but a barcode that resolves to 25 possible issues instead of 1 is a worse
+# trade than a slower scan.
+_RENDER_SCALE = 6.0
 
 
 def pages_png(pdf_bytes: bytes) -> list[bytes]:
