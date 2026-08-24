@@ -8,7 +8,9 @@ import pytest
 from comicload.core.errors import CatalogError
 from comicload.infra.storage.gcd_loader import load_dump
 
-FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "gcd_sample.sql"
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
+FIXTURE = FIXTURES / "gcd_sample.sql"
+REALISTIC = FIXTURES / "gcd_realistic.sql"
 
 
 def _dump(tmp_path: Path, body: str) -> Path:
@@ -145,14 +147,106 @@ def test_statement_may_span_several_lines(tmp_path):
 # --- extra cases: mapping mismatches ----------------------------------------
 
 
-def test_row_shorter_than_the_mapping_raises_catalog_error(tmp_path):
+def test_missing_named_column_raises_catalog_error(tmp_path):
     """A stale TABLE_MAP must fail loudly, not insert silent NULLs."""
     path = _dump(
         tmp_path,
         "INSERT INTO `gcd_issue` (`id`,`number`,`series_id`) VALUES (100,'12',10);\n",
     )
-    with pytest.raises(CatalogError, match=r"gcd_issue.*5.*3|gcd_issue.*3.*5"):
+    with pytest.raises(CatalogError, match=r"gcd_issue.*on_sale_date"):
         load_dump(path, tmp_path / "gcd.sqlite")
+
+
+# --- columns are mapped by name, never by position ---------------------------
+# Real GCD tables are 20-40 columns wide and nobody promised the order. Positional
+# reading of the fixture below puts 'color; 32 pgs' in series.publisher_id and the
+# volume number in issue.series_id — plausible counts, a catalogue that matches nothing.
+
+
+def test_realistic_wide_dump_maps_columns_by_name(tmp_path):
+    db = tmp_path / "gcd.sqlite"
+    counts = load_dump(REALISTIC, db)
+    assert counts == {"publisher": 2, "series": 2, "issue": 2}
+
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT id, name, publisher_id, year_began FROM series").fetchall() == [
+        (10, "The Punisher", 1, 2000),
+        (11, "Alex + Ada", 2, 2013),
+    ]
+    assert conn.execute("SELECT id, number, series_id, barcode FROM issue WHERE id=100").fetchone()
+    row = conn.execute(
+        """
+        SELECT p.name, s.name, i.number, i.on_sale_date
+        FROM issue i JOIN series s ON s.id = i.series_id
+                     JOIN publisher p ON p.id = s.publisher_id
+        WHERE i.barcode = '75960608457000111'
+        """
+    ).fetchone()
+    assert row == ("Marvel", "The Punisher", "12", "2001-03-01")
+
+
+def test_reordered_columns_on_the_insert_are_honoured(tmp_path):
+    """The INSERT's own column list wins, whatever order it is in."""
+    path = _dump(
+        tmp_path,
+        "INSERT INTO `gcd_series` (`name`,`year_began`,`publisher_id`,`format`,`id`) "
+        "VALUES ('The Punisher',2000,1,'color; 32 pgs',10);\n",
+    )
+    load_dump(path, tmp_path / "gcd.sqlite")
+    conn = sqlite3.connect(tmp_path / "gcd.sqlite")
+    assert conn.execute("SELECT id, name, publisher_id, year_began FROM series").fetchone() == (
+        10,
+        "The Punisher",
+        1,
+        2000,
+    )
+
+
+def test_insert_without_columns_and_without_create_table_raises(tmp_path):
+    path = _dump(tmp_path, "INSERT INTO `gcd_publisher` VALUES (1,'Marvel',225);\n")
+    with pytest.raises(CatalogError, match="gcd_publisher"):
+        load_dump(path, tmp_path / "gcd.sqlite")
+
+
+def test_rows_that_load_but_never_join_raise_catalog_error(tmp_path):
+    """The signature of a mapping mismatch: plausible counts, an unusable catalogue."""
+    path = _dump(
+        tmp_path,
+        "INSERT INTO `gcd_publisher` (`id`,`name`) VALUES (1,'Marvel');\n"
+        "INSERT INTO `gcd_series` (`id`,`name`,`publisher_id`,`year_began`) "
+        "VALUES (10,'The Punisher',999,2000);\n"
+        "INSERT INTO `gcd_issue` (`id`,`number`,`series_id`,`on_sale_date`,`barcode`) "
+        "VALUES (100,'12',888,'2001-03-01','75960608457000111');\n",
+    )
+    with pytest.raises(CatalogError, match="not one issue joins"):
+        load_dump(path, tmp_path / "gcd.sqlite")
+
+
+def test_row_wider_than_its_column_list_raises(tmp_path):
+    path = _dump(
+        tmp_path,
+        "INSERT INTO `gcd_publisher` (`id`,`name`) VALUES (1,'Marvel',225);\n",
+    )
+    with pytest.raises(CatalogError, match="3 values"):
+        load_dump(path, tmp_path / "gcd.sqlite")
+
+
+def test_truncated_dump_raises_instead_of_dropping_the_last_statement(tmp_path):
+    path = _dump(
+        tmp_path,
+        "INSERT INTO `gcd_publisher` (`id`,`name`) VALUES (1,'Marvel');\n"
+        "INSERT INTO `gcd_publisher` (`id`,`name`) VALUES (2,'DC')",
+    )
+    with pytest.raises(CatalogError, match="truncated"):
+        load_dump(path, tmp_path / "gcd.sqlite")
+
+
+def test_replace_into_statements_are_loaded_not_skipped(tmp_path):
+    path = _dump(
+        tmp_path,
+        "REPLACE INTO `gcd_publisher` (`id`,`name`) VALUES (1,'Marvel');\n",
+    )
+    assert load_dump(path, tmp_path / "gcd.sqlite")["publisher"] == 1
 
 
 def test_extra_trailing_columns_are_ignored(tmp_path):
