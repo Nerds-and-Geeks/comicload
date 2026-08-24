@@ -25,6 +25,8 @@ setup_environment()
 
 from pyzbar import pyzbar  # noqa: E402
 
+from comicload.infra.signals.ean5 import decode_ean5  # noqa: E402
+
 
 def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
     """Decode UPC/EAN barcodes from cover photo bytes using pyzbar.
@@ -37,6 +39,7 @@ def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
     image = ImageOps.exif_transpose(raw_image)
 
     found_symbols: list[Any] = list(pyzbar.decode(image))
+    decoded_from: Image.Image = image
 
     if not found_symbols:
         w, h = image.size
@@ -47,13 +50,27 @@ def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
             image.crop((0, int(h * 0.5), w, h)),
         ]
         for region in crop_regions:
-            scaled = region.resize((region.width * 3, region.height * 3), Image.Resampling.LANCZOS)
-            equalized = ImageOps.equalize(scaled.convert("L"))
-            found_symbols = list(pyzbar.decode(equalized))
+            # Equalize first without resizing — high-DPI sources decode as-is, and
+            # upscaling them past zbar's sweet spot loses the read. The 3x upscale
+            # remains as the second attempt for genuinely small regions.
+            attempts = (
+                ImageOps.equalize(region.convert("L")),
+                ImageOps.equalize(
+                    region.resize(
+                        (region.width * 3, region.height * 3), Image.Resampling.LANCZOS
+                    ).convert("L")
+                ),
+            )
+            for attempt in attempts:
+                found_symbols = list(pyzbar.decode(attempt))
+                if found_symbols:
+                    decoded_from = attempt
+                    break
             if found_symbols:
                 break
 
     found: list[DecodedBarcode] = []
+    main_symbol: Any = None
     main: str | None = None
     supplement: str | None = None
     for result in found_symbols:
@@ -61,7 +78,54 @@ def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
         if len(value) == 5:
             supplement = value
         elif len(value) >= 8:
-            main = value
+            main, main_symbol = value, result
+    if main and supplement is None and main_symbol is not None:
+        # zbar cannot be made to read EAN-2/EAN-5 add-ons through pyzbar, and the
+        # supplement is what tells one issue of a series from another when the
+        # publisher reuses a single UPC. Decode it ourselves next to the main code.
+        # rects are relative to whichever image actually decoded — full frame on
+        # the first pass, a corner crop on the retry path
+        supplement = _decode_addon(decoded_from, main_symbol.rect)
     if main:
         found.append((main, supplement))
     return found
+
+
+# How far past the main symbol the add-on can sit, in multiples of its long side.
+_ADDON_REACH = 2.5
+
+
+def _decode_addon(image: Image.Image, rect: Any) -> str | None:
+    """Look for the EAN-5 supplement in the regions where print puts it.
+
+    The add-on follows the main code in reading direction; covers are photographed
+    at every rotation, so both sides of both axes are tried, and vertical strips are
+    rotated flat before decoding.
+    """
+    margin = 60
+    left, top = rect.left, rect.top
+    right, bottom = rect.left + rect.width, rect.top + rect.height
+    vertical = rect.height > rect.width
+    reach = int(max(rect.width, rect.height) * _ADDON_REACH)
+
+    if vertical:
+        crops = [
+            image.crop((left - margin, bottom, right + margin, min(image.height, bottom + reach))),
+            image.crop((left - margin, max(0, top - reach), right + margin, top)),
+        ]
+        regions = [crop.rotate(-90, expand=True) for crop in crops] + [
+            crop.rotate(90, expand=True) for crop in crops
+        ]
+    else:
+        regions = [
+            image.crop((right, top - margin, min(image.width, right + reach), bottom + margin)),
+            image.crop((max(0, left - reach), top - margin, left, bottom + margin)),
+        ]
+
+    for region in regions:
+        if region.width < 20 or region.height < 10:
+            continue
+        decoded = decode_ean5(region)
+        if decoded:
+            return decoded
+    return None

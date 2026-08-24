@@ -11,8 +11,10 @@ import pymupdf
 
 from comicload.core.errors import ComicloadError
 
-# 2x scale ≈ 144 DPI — enough for zbar to read a barcode without ballooning memory.
-_RENDER_SCALE = 2.0
+# 6x scale ≈ 432 DPI. The main UPC reads at far less, but the EAN-5 supplement —
+# which distinguishes issues sharing a UPC — needs the extra resolution on real
+# scanner output. Pages are processed one at a time, so peak memory stays modest.
+_RENDER_SCALE = 6.0
 
 
 def pages_png(pdf_bytes: bytes) -> list[bytes]:
