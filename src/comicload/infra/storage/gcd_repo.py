@@ -120,26 +120,38 @@ class SqliteIssueResolver:
         self.close()
 
     def resolve(self, candidate: Candidate, scope: Scope) -> list[Issue]:
-        query = Query(select=_SELECT, order_by="i.id", limit=_MAX_MATCHES)
-
         if candidate.barcode:
-            query = query.where("i.barcode = ?", candidate.barcode)
-        else:
-            if candidate.series:
-                query = query.where("s.name = ? COLLATE NOCASE", candidate.series)
-            if candidate.issue_number:
-                query = query.where("i.number = ?", candidate.issue_number)
+            issues = self._run(self._scoped("i.barcode = ?", candidate.barcode, scope))
+            if not issues and len(candidate.barcode) == 12:
+                # GCD stores UPC + EAN-5 supplement concatenated (17 digits). A scan
+                # that only read the bare UPC still matches those rows by prefix.
+                issues = self._run(self._scoped("i.barcode LIKE ?", f"{candidate.barcode}%", scope))
+            return issues
 
+        query = Query(select=_SELECT, order_by="i.id", limit=_MAX_MATCHES)
+        if candidate.series:
+            query = query.where("s.name = ? COLLATE NOCASE", candidate.series)
+        if candidate.issue_number:
+            query = query.where("i.number = ?", candidate.issue_number)
         if not query.predicates:
             return []
+        return self._run(self._with_scope(query, scope))
 
+    def _scoped(self, sql: str, value: object, scope: Scope) -> Query:
+        query = Query(select=_SELECT, order_by="i.id", limit=_MAX_MATCHES)
+        return self._with_scope(query.where(sql, value), scope)
+
+    @staticmethod
+    def _with_scope(query: Query, scope: Scope) -> Query:
         if scope.publisher:
             query = query.where("p.name = ? COLLATE NOCASE", scope.publisher)
         if scope.year_from is not None:
             query = query.where(_YEAR_AT_LEAST, scope.year_from)
         if scope.year_to is not None:
             query = query.where(_YEAR_AT_MOST, scope.year_to)
+        return query
 
+    def _run(self, query: Query) -> list[Issue]:
         sql, params = query.build()
         rows = self._connect().execute(sql, params).fetchall()
 

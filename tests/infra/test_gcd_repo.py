@@ -224,3 +224,21 @@ def test_resolve_reports_the_printing_the_database_holds(one_issue):
     candidate = dataclasses.replace(CANDIDATE, printing="2nd Printing")
 
     assert one_issue.resolve(candidate, Scope())[0].printing is None
+
+
+def test_a_bare_upc_prefix_matches_gcds_17_digit_barcode(tmp_path):
+    """GCD stores UPC+EAN5 concatenated (e.g. 76194134388495711). A scan that only
+    read the 12-digit UPC must still find those rows. Found against the real dump."""
+    db = tmp_path / "gcd.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript(SCHEMA)
+    conn.execute("INSERT INTO publisher VALUES (1,'DC')")
+    conn.execute("INSERT INTO series VALUES (10,'Action Comics',1,1938)")
+    conn.execute("INSERT INTO issue VALUES (100,'957',10,'2016-06-08','76194134388495711')")
+    conn.commit()
+    conn.close()
+
+    resolver = SqliteIssueResolver(db)
+    candidate = Candidate(signal="barcode", confidence=0.9, barcode="761941343884")
+    issues = resolver.resolve(candidate, Scope())
+    assert [issue.issue_number for issue in issues] == ["957"]

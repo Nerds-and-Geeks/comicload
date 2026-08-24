@@ -104,3 +104,11 @@ def test_an_unreadable_photo_still_yields_no_candidates_rather_than_raising():
 
     signal = BarcodeSignal(decoder=corrupt)
     assert signal.identify(Photo(id="1", data=b"x", filename="a.jpg"), Scope()) == []
+
+
+def test_ean13_leading_zero_is_normalised_to_upc_a():
+    """zbar reports UPC-A as 13-digit EAN-13 with a leading zero; GCD stores the
+    12-digit UPC-A form. Found against the real 2026-08-22 dump."""
+    signal = BarcodeSignal(decoder=StubDecoder([("0761941343884", None)]))
+    candidates = signal.identify(Photo(id="1", data=b"x", filename="a.jpg"), Scope())
+    assert candidates[0].barcode == "761941343884"

@@ -90,6 +90,10 @@ class BarcodeSignal:
 
         candidates: list[Candidate] = []
         for main, supplement in decoded:
+            # zbar reports UPC-A as EAN-13 with a leading zero; GCD stores the
+            # 12-digit UPC-A form, so normalise before the catalogue sees it.
+            if len(main) == 13 and main.startswith("0"):
+                main = main[1:]
             issue, printing = decode_supplement(supplement) if supplement else (None, None)
             evidence = {"upc": main, "supplement": supplement or ""}
             if supplement:
