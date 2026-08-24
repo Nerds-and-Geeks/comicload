@@ -412,42 +412,87 @@ Phase 1 is deliberately the whole pipeline at reduced accuracy rather than a fra
 
 ---
 
-## Planned: collection gap analysis
+## Planned: storyline completion
 
-`comicload gaps collection.csv --out wishlist.csv`
+`comicload storylines collection.csv --out wishlist.csv`
 
-Reads an existing collection CSV, looks up each owned series in the local GCD mirror,
-and reports which issues are missing from otherwise-continuous runs.
+Reads an existing collection CSV and reports which issues are missing to **complete story
+arcs** — including arcs that span multiple series, e.g. a story running from Superman into
+Action Comics.
 
-**Dependency order:** needs only the CSV format and the GCD mirror, both of which land in
-Phase 1. It does **not** depend on OCR or cover matching, so it can ship immediately after
-Phase 1 rather than queueing behind Phases 2-3.
+### Why numeric run gaps are the wrong model
 
-**Output reuses the existing sink.** LoCG's format carries an `In Wish List` column, so a
-must-buy list is the same 14-column CSV with `In Collection=0, In Wish List=1`. `CsvSink`
-is unchanged, and the result imports back into LoCG as a real wishlist.
+A crossover is invisible to run-gap analysis. Owning Superman #12 and Action Comics #45
+tells you nothing about them being one story; the issue numbers share no relationship.
 
-**Scope — run gaps only.** Three readings of "complete my stories", only the first is
-promised:
+Arc membership is the correct model, and it handles cross-series arcs for free — an arc's
+issue list spans series because the arc is not defined by series.
 
-| Reading | Data needed | Status |
-|---|---|---|
-| Run gaps — own #1,2,3,5,6, need #4 | Series issue list from GCD | **In scope** |
-| Story arcs — own 5 of a 6-issue arc | Arc grouping; GCD story records do not group cleanly, Comic Vine is better | Needs research |
-| Crossovers — arc spanning several series | Crossover metadata | Out of scope |
+Numeric run gaps remain a *secondary* output (cheap, useful for completing a single title),
+but they are not the feature.
 
-**New port required.** `IssueResolver` resolves a candidate to issues; gap analysis needs
-the inverse — every issue in a series. Add `SeriesCatalog.issues_in_series(series, publisher)
--> list[Issue]` as a separate port rather than widening `IssueResolver`, keeping both
-interfaces single-purpose.
+### GCD cannot supply this — a second catalog is required
 
-**Heuristics, without which the output is noise:**
-- `--min-owned N` (default 3) — ignore series where you own too few issues to have a run
-- `--max-gap N` (default 5) — a 40-issue hole is not a gap, it means you do not own the run
+GCD is issue-level metadata: barcodes, on-sale dates, indicia. It is the right source for
+*identifying* a comic and the wrong source for storylines. Its story records do not give
+reliable cross-series arc membership.
 
-**Known hard part:** issue numbering is not integers. Annuals, `#0`, `#½`, `.1` issues, and
-volume restarts all break naive sorting. Ordering must come from GCD's own issue sequence,
-not from parsing the number string.
+Storyline completion therefore introduces a second metadata source with different
+characteristics from GCD — networked, rate-limited, API-key-bearing.
+
+| Source | Auth | Limits | Assessment |
+|---|---|---|---|
+| [Metron](https://metron-project.github.io/blog/api-best-practices) | HTTP Basic | 20/min burst, 5,000/day | **Preferred.** Supports `If-Modified-Since` and `modified_gt` incremental sync, so arc data can be synced once and refreshed by delta |
+| Comic Vine | API key | ~200/hr | Fallback. Broader coverage, stricter limit, no delta sync |
+
+Metron's incremental sync is the deciding factor: it keeps the feature inside the rate limit
+permanently rather than re-fetching on every run.
+
+### Accepted costs
+
+**This command is not offline.** Every other comicload command runs with no network. Arc
+data cannot. Mitigation is caching arcs into the same local SQLite and refreshing by delta,
+making it network-once rather than network-per-query — but the offline property is genuinely
+broken for this one feature and is stated rather than hidden.
+
+**The join between catalogs is the hard part.** Three vocabularies are in play: the CSV
+carries LoCG's strings, GCD has its own, Metron a third. Linking them is the real work.
+
+- **Modern comics: barcode is the join key.** GCD and Metron both carry barcodes, so the
+  link is exact and reuses the Phase 1 barcode signal.
+- **Pre-barcode comics:** fuzzy series + issue matching, with the same weakness as elsewhere
+  in the system. Unjoined issues are reported as unresolved rather than silently skipped.
+
+### Architecture
+
+New port, kept separate from `IssueResolver` so each interface stays single-purpose:
+
+```python
+class StoryArcCatalog(Protocol):
+    def arcs_for_issue(self, issue: Issue) -> list[StoryArc]: ...
+    def issues_in_arc(self, arc_id: str) -> list[Issue]: ...
+```
+
+Implementations: `MetronArcCatalog`, `ComicVineArcCatalog`, plus a `CachedArcCatalog`
+decorator holding the local SQLite cache. API keys go through the existing `SecretStore`
+port into the OS keychain — the mechanism already specified under principle 8.
+
+Output reuses `CsvSink` unchanged: LoCG's format carries an `In Wish List` column, so the
+must-buy list is the same 14-column CSV with `In Collection=0, In Wish List=1`, importable
+back into LoCG as a real wishlist.
+
+### Dependency order
+
+Needs the CSV format, the GCD mirror, and the barcode signal — all Phase 1. Does **not**
+need OCR or cover matching. Can ship after Phase 1, ahead of Phases 2-3.
+
+### Open sub-questions
+
+- Metron's exact arc endpoint shape and whether an issue record carries its arc membership
+  directly must be confirmed against their OpenAPI schema at `/api/schema/` before
+  implementation.
+- Arc coverage for older material is likely thin in both sources. Expected behaviour when an
+  owned issue belongs to no known arc: report as "no arc data", never as "complete".
 
 ---
 
