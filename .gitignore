@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# OMC
+.omc/
+
+# Local data — never commit
+*.sqlite
+*.sqlite3
+gcd_dump/
+locg_state.json
+config.toml
+photos/
+out/
+*.csv
+
+# Test fixtures are explicitly allowed back in
+!tests/fixtures/**/*.csv
+
+# macOS
+.DS_Store
