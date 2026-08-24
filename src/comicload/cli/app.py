@@ -193,6 +193,34 @@ def status(
     )
 
 
+@app.command()
+def export(
+    catalogue_db: Annotated[
+        Path | None,
+        typer.Option("--catalogue-db", help="Path of your catalogue of scan results."),
+    ] = None,
+    out: Annotated[Path, typer.Option("--out", "-o", help="Where to write the CSV.")] = DEFAULT_OUT,
+) -> None:
+    """Write every confirmed comic in your catalogue to a CSV, on its own —
+    no scanning or review required."""
+    config = load_config()
+    catalogue_path = catalogue_db or config.catalogue_db_path()
+    try:
+        entries = SqliteRepository(catalogue_path).confirmed_entries()
+    except ComicloadError as exc:
+        raise _fail(str(exc)) from exc
+
+    if not entries:
+        console.print(
+            "[yellow]Nothing confirmed yet.[/yellow] Run [bold]comicload scan[/bold] "
+            "or [bold]comicload review[/bold] first."
+        )
+        return
+
+    result = CsvSink(out).push(entries)
+    console.print(import_panel(result))
+
+
 @app.command(name="import")
 def import_csv(
     file: Annotated[Path, typer.Argument(help="The CSV to check or upload.")],

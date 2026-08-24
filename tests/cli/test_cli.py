@@ -569,3 +569,41 @@ def test_catalog_sync_remembers_the_dump_for_scan_to_reuse(tmp_path, monkeypatch
 
     assert result.exit_code == 0, result.output
     assert load_config(config_path).storage.last_dump == str(FIXTURE)
+
+
+def test_export_writes_confirmed_entries_without_scanning_or_reviewing(tmp_path, monkeypatch):
+    """Both scan and review only write the CSV as a side effect of doing something
+    else. Confirmed comics already sitting in the catalogue need a way out on their
+    own — re-scanning shouldn't be required just to get a fresh copy of the file."""
+    _, gcd_db, catalogue_db = _scan_one_unreadable_photo(tmp_path, monkeypatch)
+    from comicload.models import Bucket, CatalogEntry, IdentifyResult
+
+    repo = SqliteRepository(catalogue_db)
+    repo.save(
+        [
+            IdentifyResult(
+                "p9",
+                "already-confirmed.jpg",
+                Bucket.CONFIDENT,
+                entry=CatalogEntry("DC", "Superman", "Superman #27", None),
+            )
+        ]
+    )
+
+    out = tmp_path / "fresh.csv"
+    result = runner.invoke(app, ["export", "--catalogue-db", str(catalogue_db), "--out", str(out)])
+
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+    rows = read_csv(out)
+    assert any(r.full_title == "Superman #27" for r in rows)
+
+
+def test_export_says_so_when_the_catalogue_has_nothing_confirmed_yet(tmp_path):
+    empty = tmp_path / "empty.sqlite"
+    SqliteRepository(empty).save([])
+
+    result = runner.invoke(app, ["export", "--catalogue-db", str(empty)])
+
+    assert result.exit_code == 0
+    assert "nothing" in result.output.lower()
