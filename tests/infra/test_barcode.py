@@ -39,7 +39,6 @@ def test_signal_returns_candidate_carrying_full_barcode():
 
     candidates = signal.identify(photo, Scope())
 
-    assert len(candidates) == 1
     assert candidates[0].barcode == "75960608457000111"
     assert candidates[0].issue_number == "1"
     assert candidates[0].printing == "1st Printing"
@@ -47,13 +46,26 @@ def test_signal_returns_candidate_carrying_full_barcode():
     assert candidates[0].confidence >= 0.9
 
 
-def test_signal_handles_barcode_without_supplement():
+def test_signal_also_offers_the_bare_upc_so_resolution_can_fall_back():
+    """Most catalogue rows carry the bare UPC; the concatenation alone would miss them."""
+    signal = BarcodeSignal(decoder=StubDecoder([("759606084570", "00111")]))
+
+    candidates = signal.identify(Photo(id="1", data=b"fake", filename="a.jpg"), Scope())
+
+    assert [c.barcode for c in candidates] == ["75960608457000111", "759606084570"]
+    assert all(c.confidence >= 0.9 for c in candidates)
+
+
+def test_barcode_without_a_supplement_is_still_an_exact_reading():
+    """No EAN-5 addon is normal for pre-1990s issues, trades and one-shots."""
     signal = BarcodeSignal(decoder=StubDecoder([("759606084570", None)]))
     candidates = signal.identify(Photo(id="1", data=b"x", filename="a.jpg"), Scope())
 
-    assert candidates[0].barcode == "759606084570"
+    assert [c.barcode for c in candidates] == ["759606084570"]
     assert candidates[0].issue_number is None
-    assert candidates[0].confidence < 0.9
+    assert candidates[0].confidence >= 0.85, (
+        "a perfect barcode read could never reach CONFIDENT without a supplement"
+    )
 
 
 def test_signal_returns_empty_when_nothing_decodes():

@@ -184,3 +184,33 @@ def test_a_deliberate_comicload_error_stops_the_run():
     service = IdentifyService(signals=[NoLibrary()], resolver=StubResolver({}))
     with pytest.raises(ComicloadError, match="zbar"):
         service.run(StubSource([PHOTO]), Scope())
+
+
+# --- a barcode with no EAN-5 supplement must still be identifiable -------------
+
+
+def test_an_exact_bare_upc_match_reaches_confident():
+    """Comics without the 5-digit addon could never be auto-identified before."""
+    from comicload.infra.signals.barcode import BarcodeSignal
+
+    signal = BarcodeSignal(decoder=lambda data: [("759606084570", None)])
+    service = IdentifyService(signals=[signal], resolver=StubResolver({"759606084570": [ISSUE]}))
+
+    result = service.run(StubSource([PHOTO]), Scope())[0]
+
+    assert result.bucket is Bucket.CONFIDENT
+    assert result.entry is not None
+
+
+def test_resolution_falls_back_from_the_concatenated_barcode_to_the_bare_upc():
+    """The catalogue row has no supplement recorded; the scan must still match it."""
+    from comicload.infra.signals.barcode import BarcodeSignal
+
+    signal = BarcodeSignal(decoder=lambda data: [("759606084570", "00111")])
+    service = IdentifyService(signals=[signal], resolver=StubResolver({"759606084570": [ISSUE]}))
+
+    result = service.run(StubSource([PHOTO]), Scope())[0]
+
+    assert result.bucket is Bucket.CONFIDENT
+    assert result.entry is not None
+    assert result.entry.notes == "1st Printing", "the supplement hint must survive the fallback"

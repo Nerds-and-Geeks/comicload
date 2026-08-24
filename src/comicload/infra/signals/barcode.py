@@ -11,6 +11,11 @@ from comicload.core.registry import register_signal
 DecodedBarcode = tuple[str, str | None]
 Decoder = Callable[[bytes], Sequence[DecodedBarcode]]
 
+# A barcode is read, not guessed. The concatenated form is tried before the bare UPC
+# only because it is more specific — both are exact matches when the catalogue has them.
+FULL_BARCODE_CONFIDENCE = 0.95
+BARE_UPC_CONFIDENCE = 0.9
+
 _PRINTING_LABELS = {
     "1": "1st Printing",
     "2": "2nd Printing",
@@ -76,8 +81,18 @@ def _pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
 class BarcodeSignal:
     """Decodes UPC/EAN from a cover photo.
 
-    The full barcode string is the payload; the catalogue matches it directly.
-    Supplement decoding only narrows when that direct match fails.
+    A decoded barcode is a machine reading, not a guess, so both forms it can take are
+    offered at high confidence and the catalogue decides between them: first the
+    17-character concatenation of UPC and EAN-5 supplement, then the bare UPC as a
+    fallback. That fallback matters — comics without a printed supplement (most
+    pre-1990s issues, trades and one-shots) are recorded under the bare UPC, and tying
+    confidence to the presence of a supplement made them impossible to identify even on
+    an exact database match.
+
+    What makes a photo CONFIDENT is the barcode resolving to exactly one issue, which
+    only IdentifyService can know. The supplement's issue number and printing are
+    empirical hints: they never drive the lookup, but they are what `review` shows and
+    what lands in an entry's notes.
 
     A photo this signal cannot read yields no candidates. A *library* it cannot load is
     a different thing entirely — that would fail on every photo in the run — so it
@@ -102,14 +117,26 @@ class BarcodeSignal:
         candidates: list[Candidate] = []
         for main, supplement in decoded:
             issue, printing = decode_supplement(supplement) if supplement else (None, None)
+            evidence = {"upc": main, "supplement": supplement or ""}
+            if supplement:
+                candidates.append(
+                    Candidate(
+                        signal=self.name,
+                        confidence=FULL_BARCODE_CONFIDENCE,
+                        barcode=f"{main}{supplement}",
+                        issue_number=issue,
+                        printing=printing,
+                        evidence=evidence,
+                    )
+                )
             candidates.append(
                 Candidate(
                     signal=self.name,
-                    confidence=0.95 if supplement else 0.75,
-                    barcode=f"{main}{supplement}" if supplement else main,
+                    confidence=BARE_UPC_CONFIDENCE,
+                    barcode=main,
                     issue_number=issue,
                     printing=printing,
-                    evidence={"upc": main, "supplement": supplement or ""},
+                    evidence=evidence,
                 )
             )
         return candidates
