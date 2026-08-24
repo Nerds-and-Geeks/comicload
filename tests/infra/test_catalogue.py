@@ -160,6 +160,7 @@ def test_a_failing_migration_leaves_the_database_unchanged_and_re_runnable(tmp_p
     db = tmp_path / "comicload.sqlite"
     SqliteRepository(db).save([CONFIDENT])
 
+    original_version = catalogue.SCHEMA_VERSION
     monkeypatch.setattr(catalogue, "MIGRATIONS", (*catalogue.MIGRATIONS, BROKEN_MIGRATION))
     monkeypatch.setattr(catalogue, "SCHEMA_VERSION", catalogue.SCHEMA_VERSION + 1)
 
@@ -167,7 +168,9 @@ def test_a_failing_migration_leaves_the_database_unchanged_and_re_runnable(tmp_p
         SqliteRepository(db).pending_review()
 
     conn = sqlite3.connect(db)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1, "stamp moved despite failure"
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == original_version, (
+        "stamp moved despite failure"
+    )
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "extra" not in tables, "a partial schema change survived the failed migration"
     conn.close()
@@ -194,3 +197,44 @@ def test_a_catalogue_from_a_newer_comicload_is_refused(tmp_path):
 def test_the_migrations_comment_matches_the_indexing():
     """MIGRATIONS[n] migrates FROM version n; the comment used to say the opposite."""
     assert len(catalogue.MIGRATIONS) == catalogue.SCHEMA_VERSION
+
+
+def test_signal_failures_survive_persistence(tmp_path):
+    """I3: the fix that surfaced signal failures only covered the screen where the
+    failure happened — the persisted row silently dropped them."""
+    repo = SqliteRepository(tmp_path / "c.sqlite")
+    repo.save(
+        [
+            IdentifyResult(
+                "p1",
+                "a.jpg",
+                Bucket.UNRECOGNIZED,
+                signal_failures=("barcode", "ocr"),
+            )
+        ]
+    )
+    pending = repo.pending_review()
+    assert pending[0].signal_failures == ("barcode", "ocr")
+
+
+def test_a_version_one_catalogue_is_migrated_and_keeps_its_rows(tmp_path):
+    """The v2 migration adds the signal_failures column without touching data."""
+    import sqlite3
+
+    from comicload.infra.storage.catalogue import MIGRATIONS
+
+    db = tmp_path / "v1.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript(MIGRATIONS[0])
+    conn.execute(
+        "INSERT INTO scan_result (photo_id, filename, bucket, entry, candidates)"
+        " VALUES ('p9', 'old.jpg', 'unrecognized', NULL, '[]')"
+    )
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
+    conn.close()
+
+    repo = SqliteRepository(db)
+    pending = repo.pending_review()
+    assert [r.photo_id for r in pending] == ["p9"]
+    assert pending[0].signal_failures == ()

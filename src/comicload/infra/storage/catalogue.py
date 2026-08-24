@@ -18,7 +18,7 @@ from comicload.core.errors import CatalogError
 from comicload.core.models import Bucket, Candidate, CatalogEntry, IdentifyResult
 from comicload.core.storage_registry import Dsn, register_repository
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Index = the version a script migrates FROM. MIGRATIONS[0] takes an empty or
 # pre-versioned database (version 0) to version 1. To evolve the schema, append a new
@@ -35,6 +35,10 @@ MIGRATIONS: tuple[str, ...] = (
         candidates TEXT NOT NULL DEFAULT '[]'
     );
     CREATE INDEX IF NOT EXISTS idx_scan_result_bucket ON scan_result(bucket);
+    """,
+    """
+    ALTER TABLE scan_result
+        ADD COLUMN signal_failures TEXT NOT NULL DEFAULT '[]';
     """,
 )
 
@@ -147,6 +151,7 @@ class SqliteRepository:
                 result.bucket.value,
                 _entry_to_json(result.entry),
                 _candidates_to_json(result.candidates),
+                json.dumps(list(result.signal_failures)),
             )
             for result in results
         ]
@@ -154,13 +159,15 @@ class SqliteRepository:
         try:
             conn.executemany(
                 """
-                INSERT INTO scan_result (photo_id, filename, bucket, entry, candidates)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO scan_result
+                    (photo_id, filename, bucket, entry, candidates, signal_failures)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(photo_id) DO UPDATE SET
-                    filename   = excluded.filename,
-                    bucket     = excluded.bucket,
-                    entry      = excluded.entry,
-                    candidates = excluded.candidates
+                    filename        = excluded.filename,
+                    bucket          = excluded.bucket,
+                    entry           = excluded.entry,
+                    candidates      = excluded.candidates,
+                    signal_failures = excluded.signal_failures
                 """,
                 rows,
             )
@@ -172,7 +179,7 @@ class SqliteRepository:
         conn = self._connect(create=False)
         try:
             rows = conn.execute(
-                "SELECT photo_id, filename, bucket, entry, candidates "
+                "SELECT photo_id, filename, bucket, entry, candidates, signal_failures "
                 f"FROM scan_result WHERE {where} ORDER BY filename",
                 params,
             ).fetchall()
@@ -185,6 +192,7 @@ class SqliteRepository:
                 bucket=Bucket(row[2]),
                 entry=_entry_from_json(row[3]),
                 candidates=_candidates_from_json(row[4]),
+                signal_failures=tuple(json.loads(row[5] or "[]")),
             )
             for row in rows
         ]
