@@ -1,3 +1,4 @@
+import io
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -252,3 +253,35 @@ def test_a_version_one_catalogue_is_migrated_and_keeps_its_rows(tmp_path):
     pending = repo.pending_review()
     assert [r.photo_id for r in pending] == ["p9"]
     assert pending[0].signal_failures == ()
+
+
+def test_quarantined_rows_keep_a_viewable_image(tmp_path):
+    """Review happens days later when the source folder may be gone — the catalogue
+    must be able to show the cover it is asking about."""
+    from PIL import Image as PILImage
+
+    buffer = io.BytesIO()
+    PILImage.new("RGB", (2000, 3000), (200, 40, 40)).save(buffer, format="PNG")
+    repo = SqliteRepository(tmp_path / "c.sqlite")
+    repo.save([IdentifyResult("p1", "a.jpg", Bucket.UNRECOGNIZED, image=buffer.getvalue())])
+    stored = repo.pending_review()[0].image
+    assert stored is not None
+    with PILImage.open(io.BytesIO(stored)) as thumb:
+        assert max(thumb.size) <= 1000, "image must be stored as a bounded thumbnail"
+
+
+def test_identified_rows_do_not_hoard_pixels(tmp_path):
+    repo = SqliteRepository(tmp_path / "c.sqlite")
+    repo.save([IdentifyResult("p1", "a.jpg", Bucket.CONFIDENT, entry=ENTRY, image=b"x" * 100)])
+    conn = sqlite3.connect(tmp_path / "c.sqlite")
+    blob = conn.execute("SELECT image FROM scan_result WHERE photo_id='p1'").fetchone()[0]
+    conn.close()
+    assert blob is None
+
+
+def test_a_version_two_catalogue_is_migrated_and_keeps_its_rows(tmp_path):
+    db = catalogue_at_version(tmp_path / "v2.sqlite", 2, [("p9", "old.jpg", "unrecognized")])
+    repo = SqliteRepository(db)
+    pending = repo.pending_review()
+    assert [r.photo_id for r in pending] == ["p9"]
+    assert pending[0].image is None

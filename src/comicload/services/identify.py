@@ -74,6 +74,7 @@ class IdentifyService:
                 filename=photo.filename,
                 bucket=Bucket.UNRECOGNIZED,
                 signal_failures=signal_failures,
+                image=photo.data,
             )
 
         resolved_any = False
@@ -103,12 +104,15 @@ class IdentifyService:
                 )
 
         bucket = Bucket.AMBIGUOUS if resolved_any else Bucket.UNRECOGNIZED
+        # Quarantined photos keep their pixels: review happens days later, when the
+        # source folder may be gone, and the catalogue must show what it is asking about.
         return IdentifyResult(
             photo_id=photo.id,
             filename=photo.filename,
             bucket=bucket,
             candidates=tuple(candidates),
             signal_failures=signal_failures,
+            image=photo.data,
         )
 
     def run(self, source: PhotoSource, scope: Scope) -> list[IdentifyResult]:

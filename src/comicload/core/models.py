@@ -107,6 +107,11 @@ class IdentifyResult:
     """Signals that crashed on this photo. A run must not stop, but it must not lie either:
     a signal that failed on every photo is a broken install, not a shelf of odd comics."""
 
+    image: bytes | None = None
+    """The cover pixels, kept only while the photo is quarantined. Review sessions run
+    days later, long after the source folder may be gone — the catalogue must be able
+    to show the cover it is asking about. Cleared once the comic is identified."""
+
 
 @dataclass(frozen=True, slots=True)
 class ImportResult:

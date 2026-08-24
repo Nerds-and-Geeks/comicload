@@ -7,6 +7,7 @@ mirror rebuilt by `catalog sync`; this file holds the user's irreplaceable resul
 from __future__ import annotations
 
 import dataclasses
+import io
 import json
 import sqlite3
 from collections.abc import Sequence
@@ -14,11 +15,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from comicload.core.errors import CatalogError
 from comicload.core.models import Bucket, Candidate, CatalogEntry, IdentifyResult
 from comicload.core.storage_registry import Dsn, register_repository
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Index = the version a script migrates FROM. MIGRATIONS[0] takes an empty or
 # pre-versioned database (version 0) to version 1. To evolve the schema, append a new
@@ -39,6 +42,10 @@ MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE scan_result
         ADD COLUMN signal_failures TEXT NOT NULL DEFAULT '[]';
+    """,
+    """
+    ALTER TABLE scan_result
+        ADD COLUMN image BLOB;
     """,
 )
 
@@ -86,6 +93,23 @@ def _migrate(conn: sqlite3.Connection) -> None:
         )
     for version in range(current, SCHEMA_VERSION):
         _apply(conn, version)
+
+
+_THUMBNAIL_MAX = 1000  # px on the long side — recognisable, ~100KB, not 5MB of scan
+
+
+def _thumbnail(image: bytes | None) -> bytes | None:
+    """Shrink quarantined cover pixels to a bounded JPEG before storing them."""
+    if not image:
+        return None
+    try:
+        with Image.open(io.BytesIO(image)) as source:
+            source.thumbnail((_THUMBNAIL_MAX, _THUMBNAIL_MAX))
+            out = io.BytesIO()
+            source.convert("RGB").save(out, format="JPEG", quality=82)
+            return out.getvalue()
+    except Exception:
+        return None
 
 
 def _entry_to_json(entry: CatalogEntry | None) -> str | None:
@@ -152,6 +176,7 @@ class SqliteRepository:
                 _entry_to_json(result.entry),
                 _candidates_to_json(result.candidates),
                 json.dumps(list(result.signal_failures)),
+                _thumbnail(result.image) if result.bucket is not Bucket.CONFIDENT else None,
             )
             for result in results
         ]
@@ -160,14 +185,15 @@ class SqliteRepository:
             conn.executemany(
                 """
                 INSERT INTO scan_result
-                    (photo_id, filename, bucket, entry, candidates, signal_failures)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (photo_id, filename, bucket, entry, candidates, signal_failures, image)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(photo_id) DO UPDATE SET
                     filename        = excluded.filename,
                     bucket          = excluded.bucket,
                     entry           = excluded.entry,
                     candidates      = excluded.candidates,
-                    signal_failures = excluded.signal_failures
+                    signal_failures = excluded.signal_failures,
+                    image           = excluded.image
                 """,
                 rows,
             )
@@ -179,7 +205,7 @@ class SqliteRepository:
         conn = self._connect(create=False)
         try:
             rows = conn.execute(
-                "SELECT photo_id, filename, bucket, entry, candidates, signal_failures "
+                "SELECT photo_id, filename, bucket, entry, candidates, signal_failures, image "
                 f"FROM scan_result WHERE {where} ORDER BY filename",
                 params,
             ).fetchall()
@@ -193,6 +219,7 @@ class SqliteRepository:
                 entry=_entry_from_json(row[3]),
                 candidates=_candidates_from_json(row[4]),
                 signal_failures=tuple(json.loads(row[5] or "[]")),
+                image=row[6],
             )
             for row in rows
         ]
