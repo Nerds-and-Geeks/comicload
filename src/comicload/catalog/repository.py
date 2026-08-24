@@ -92,7 +92,12 @@ class SqliteIssueResolver:
                 issues = self._query(prefix_sql, (bare_upc, upper))
 
             if len(issues) > 1 and candidate.issue_number:
-                filtered = [i for i in issues if i.issue_number == candidate.issue_number]
+                cand_num = candidate.issue_number.lstrip("0") or "0"
+                filtered = [
+                    i
+                    for i in issues
+                    if i.issue_number.lstrip("0") == cand_num or cand_num in i.issue_number.split()
+                ]
                 if filtered:
                     return filtered
             return issues

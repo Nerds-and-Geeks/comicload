@@ -31,67 +31,59 @@ from comicload.signals.ean5 import decode_ean5  # noqa: E402
 def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
     """Decode UPC/EAN barcodes from cover photo bytes using pyzbar.
 
-    Caps working resolution to max 1600px for ultra-fast C/zbar scanning before evaluating
-    rotation angles and regional corner crops.
+    Preserves full cover photo resolution for maximum EAN-5 supplement barcode accuracy.
+    Evaluates 0°, 90°, 180°, 270° rotation angles and corner crops when 0° yields 0 symbols.
     """
     raw_image = Image.open(io.BytesIO(image_bytes))
     image = ImageOps.exif_transpose(raw_image)
 
-    # High-megapixel camera photos (4000x3000) take 800ms+ in zbar; downscaling to 1600px takes 5ms
-    # and decodes zbar symbols in 12ms with 100% precision.
-    if max(image.width, image.height) > 1600:
-        image.thumbnail((1600, 1600), Image.Resampling.BILINEAR)
+    # Valid symbologies printed on comics; ignores noise symbols from cover art
+    valid_types = {"EAN13", "UPCA", "EAN5", "UPCE", "ISBN13", "EAN8"}
 
-    # 1. Fast 0° pass on working frame
-    found_symbols: list[Any] = list(pyzbar.decode(image))
+    found_symbols: list[Any] = []
     decoded_from: Image.Image = image
 
-    # 2. If 0° fails, work from a bounded copy before rotating/cropping
-    if not found_symbols:
-        work_image = image.copy()
-        work_image.thumbnail((3000, 3000), Image.Resampling.BILINEAR)
+    for angle in (0, 90, 180, 270):
+        oriented = image if angle == 0 else image.rotate(angle, expand=True)
+        symbols = [s for s in pyzbar.decode(oriented) if s.type in valid_types or not s.type]
+        if symbols:
+            found_symbols = symbols
+            decoded_from = oriented
+            break
 
-        for angle in (0, 90, 180, 270):
-            oriented = work_image if angle == 0 else work_image.rotate(angle, expand=True)
-            symbols = list(pyzbar.decode(oriented))
-            if symbols:
-                found_symbols = symbols
-                decoded_from = oriented
-                break
+        equalized_full = ImageOps.equalize(oriented.convert("L"))
+        symbols = [s for s in pyzbar.decode(equalized_full) if s.type in valid_types or not s.type]
+        if symbols:
+            found_symbols = symbols
+            decoded_from = equalized_full
+            break
 
-            equalized_full = ImageOps.equalize(oriented.convert("L"))
-            symbols = list(pyzbar.decode(equalized_full))
-            if symbols:
-                found_symbols = symbols
-                decoded_from = equalized_full
-                break
-
-            w, h = oriented.size
-            crop_regions = [
-                oriented.crop((int(w * 0.6), int(h * 0.6), w, h)),
-                oriented.crop((0, int(h * 0.6), int(w * 0.4), h)),
-                oriented.crop((0, 0, int(w * 0.4), int(h * 0.4))),
-                oriented.crop((0, int(h * 0.5), w, h)),
-            ]
-            for region in crop_regions:
-                attempts = (
-                    ImageOps.equalize(region.convert("L")),
-                    ImageOps.equalize(
-                        region.resize(
-                            (region.width * 2, region.height * 2), Image.Resampling.LANCZOS
-                        ).convert("L")
-                    ),
-                )
-                for attempt in attempts:
-                    symbols = list(pyzbar.decode(attempt))
-                    if symbols:
-                        found_symbols = symbols
-                        decoded_from = attempt
-                        break
-                if found_symbols:
+        w, h = oriented.size
+        crop_regions = [
+            oriented.crop((int(w * 0.6), int(h * 0.6), w, h)),
+            oriented.crop((0, int(h * 0.6), int(w * 0.4), h)),
+            oriented.crop((0, 0, int(w * 0.4), int(h * 0.4))),
+            oriented.crop((0, int(h * 0.5), w, h)),
+        ]
+        for region in crop_regions:
+            attempts = (
+                ImageOps.equalize(region.convert("L")),
+                ImageOps.equalize(
+                    region.resize(
+                        (region.width * 3, region.height * 3), Image.Resampling.LANCZOS
+                    ).convert("L")
+                ),
+            )
+            for attempt in attempts:
+                symbols = [s for s in pyzbar.decode(attempt) if s.type in valid_types or not s.type]
+                if symbols:
+                    found_symbols = symbols
+                    decoded_from = attempt
                     break
             if found_symbols:
                 break
+        if found_symbols:
+            break
 
     # Comic covers only ever carry UPC/EAN codes. pyzbar occasionally misreads
     # unrelated print texture as an unrelated symbology (seen on a real scan: a
