@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date
 from pathlib import Path
+from types import TracebackType
 
 from comicload.core.errors import CatalogError
 from comicload.core.models import Candidate, Issue, Scope
@@ -60,24 +61,52 @@ class SqliteIssueResolver:
     """Resolves candidates against the local GCD mirror.
 
     Barcode match is exact and preferred. Series/issue match is the fallback.
+
+    One resolver holds one connection, opened on first use and reused for every photo
+    after it: a 500-photo scan is one open and one existence check, not 500 of each.
+    Close it with `close()`, or use the resolver as a context manager.
+
+    The connection is opened lazily, not in __init__, so building a resolver never
+    touches the disk — a missing catalogue is reported when it is actually needed, and
+    reported the same way it always was.
     """
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
+        self._conn: sqlite3.Connection | None = None
 
     @classmethod
     def from_dsn(cls, dsn: Dsn) -> SqliteIssueResolver:
         return cls(Path(dsn.target))
 
     def _connect(self) -> sqlite3.Connection:
-        if not self._db_path.exists():
-            raise CatalogError(
-                f"no metadata catalogue at {self._db_path}; run 'comicload catalog sync' first"
-            )
-        conn = sqlite3.connect(self._db_path)
-        conn.row_factory = sqlite3.Row  # rows are read by column name, never by position
-        conn.create_function(_YEAR_FUNCTION, 1, _year_of, deterministic=True)
-        return conn
+        if self._conn is None:
+            if not self._db_path.exists():
+                raise CatalogError(
+                    f"no metadata catalogue at {self._db_path}; run 'comicload catalog sync' first"
+                )
+            conn = sqlite3.connect(self._db_path)
+            conn.row_factory = sqlite3.Row  # rows are read by column name, never by position
+            conn.create_function(_YEAR_FUNCTION, 1, _year_of, deterministic=True)
+            self._conn = conn
+        return self._conn
+
+    def close(self) -> None:
+        """Release the connection. Resolving again simply opens a new one."""
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    def __enter__(self) -> SqliteIssueResolver:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
 
     def resolve(self, candidate: Candidate, scope: Scope) -> list[Issue]:
         query = Query(select=_SELECT, order_by="i.id", limit=_MAX_MATCHES)
@@ -101,12 +130,7 @@ class SqliteIssueResolver:
             query = query.where(_YEAR_AT_MOST, scope.year_to)
 
         sql, params = query.build()
-
-        conn = self._connect()
-        try:
-            rows = conn.execute(sql, params).fetchall()
-        finally:
-            conn.close()
+        rows = self._connect().execute(sql, params).fetchall()
 
         return [
             Issue(

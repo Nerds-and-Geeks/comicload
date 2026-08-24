@@ -129,3 +129,76 @@ def test_reordering_the_select_list_cannot_misassign_a_field(monkeypatch, tmp_pa
     assert issue.series == "Detective Comics"
     assert issue.issue_number == "7"
     assert issue.on_sale_date == date(1964, 1, 1)
+
+
+# --- one connection for a whole scan, not one per photo ------------------------
+
+
+CANDIDATE = Candidate(signal="ocr", confidence=0.6, series="Detective Comics", issue_number="7")
+
+
+@pytest.fixture
+def one_issue(tmp_path):
+    return SqliteIssueResolver(build_db(tmp_path / "gcd.sqlite", [(1, "7", "1964-01-01")]))
+
+
+@pytest.fixture
+def opened(monkeypatch):
+    """Every connection sqlite3 hands out from here on, in order."""
+    connections = []
+    real_connect = sqlite3.connect
+
+    def recording(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        connections.append(conn)
+        return conn
+
+    monkeypatch.setattr(gcd_repo.sqlite3, "connect", recording)
+    return connections
+
+
+def test_repeated_resolves_share_one_connection(one_issue, opened):
+    """A 500-photo scan used to open 500 connections and stat the file 500 times."""
+    for _ in range(3):
+        assert one_issue.resolve(CANDIDATE, Scope())
+
+    assert len(opened) == 1
+
+
+def test_close_releases_the_connection(one_issue, opened):
+    one_issue.resolve(CANDIDATE, Scope())
+    one_issue.close()
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        opened[0].execute("SELECT 1")
+
+
+def test_close_is_safe_to_call_twice_and_before_any_query(one_issue):
+    one_issue.close()
+    one_issue.close()
+
+
+def test_a_closed_resolver_still_works(one_issue, opened):
+    one_issue.resolve(CANDIDATE, Scope())
+    one_issue.close()
+
+    assert one_issue.resolve(CANDIDATE, Scope())
+    assert len(opened) == 2
+
+
+def test_the_resolver_is_a_context_manager(one_issue, opened):
+    with one_issue as resolver:
+        assert resolver.resolve(CANDIDATE, Scope())
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        opened[0].execute("SELECT 1")
+
+
+def test_a_missing_database_is_reported_when_it_is_used(tmp_path):
+    """Constructing a resolver must not touch the disk; resolving must say what is wrong."""
+    from comicload.core.errors import CatalogError
+
+    resolver = SqliteIssueResolver(tmp_path / "absent.sqlite")
+
+    with pytest.raises(CatalogError, match="catalog sync"):
+        resolver.resolve(CANDIDATE, Scope())
