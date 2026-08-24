@@ -1,10 +1,12 @@
 """The resolver's own tests: what SQL it asks for, and how it reads the answer back."""
 
 import sqlite3
+from datetime import date
 
 import pytest
 
 from comicload.core.models import Candidate, Scope
+from comicload.infra.storage import gcd_repo
 from comicload.infra.storage.gcd_loader import SCHEMA
 from comicload.infra.storage.gcd_repo import SqliteIssueResolver
 
@@ -95,3 +97,35 @@ def test_a_year_scope_excludes_issues_outside_it(tmp_path):
 
     assert [i.gcd_id for i in resolver.resolve(candidate, Scope(year_from=1980))] == [2, 3]
     assert [i.gcd_id for i in resolver.resolve(candidate, Scope(year_to=1980))] == [1, 2]
+
+
+# --- columns are read by name, so the SELECT list can be reordered -------------
+
+
+REORDERED_SELECT = """
+SELECT i.on_sale_date AS on_sale_date,
+       s.name AS series_name,
+       i.number AS issue_number,
+       p.name AS publisher_name,
+       i.id AS issue_id
+FROM issue i
+JOIN series s ON s.id = i.series_id
+JOIN publisher p ON p.id = s.publisher_id
+"""
+
+
+def test_reordering_the_select_list_cannot_misassign_a_field(monkeypatch, tmp_path):
+    """Positional reads put the publisher in the series and never say a word."""
+    resolver = SqliteIssueResolver(build_db(tmp_path / "gcd.sqlite", [(1, "7", "1964-01-01")]))
+    monkeypatch.setattr(gcd_repo, "_SELECT", REORDERED_SELECT)
+
+    issue = resolver.resolve(
+        Candidate(signal="ocr", confidence=0.6, series="Detective Comics", issue_number="7"),
+        Scope(),
+    )[0]
+
+    assert issue.gcd_id == 1
+    assert issue.publisher == "DC"
+    assert issue.series == "Detective Comics"
+    assert issue.issue_number == "7"
+    assert issue.on_sale_date == date(1964, 1, 1)

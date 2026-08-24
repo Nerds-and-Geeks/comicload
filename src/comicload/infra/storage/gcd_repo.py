@@ -9,8 +9,16 @@ from comicload.core.models import Candidate, Issue, Scope
 from comicload.core.storage_registry import Dsn, register_resolver
 from comicload.infra.storage.query import Query
 
+# Aliased, and read back by those names below. Two tables here both have a `name` and an
+# `id`, so a bare column list would leave the mapping to SELECT order — the same coupling
+# gcd_loader refuses when it reads a dump, and for the same reason: reordering this list
+# would put the publisher in the series on every issue and nothing would say a word.
 _SELECT = """
-SELECT i.id, p.name, s.name, i.number, i.on_sale_date
+SELECT i.id AS issue_id,
+       p.name AS publisher_name,
+       s.name AS series_name,
+       i.number AS issue_number,
+       i.on_sale_date AS on_sale_date
 FROM issue i
 JOIN series s ON s.id = i.series_id
 JOIN publisher p ON p.id = s.publisher_id
@@ -67,6 +75,7 @@ class SqliteIssueResolver:
                 f"no metadata catalogue at {self._db_path}; run 'comicload catalog sync' first"
             )
         conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row  # rows are read by column name, never by position
         conn.create_function(_YEAR_FUNCTION, 1, _year_of, deterministic=True)
         return conn
 
@@ -101,11 +110,11 @@ class SqliteIssueResolver:
 
         return [
             Issue(
-                gcd_id=row[0],
-                publisher=row[1],
-                series=row[2],
-                issue_number=row[3],
-                on_sale_date=_parse_date(row[4]),
+                gcd_id=row["issue_id"],
+                publisher=row["publisher_name"],
+                series=row["series_name"],
+                issue_number=row["issue_number"],
+                on_sale_date=_parse_date(row["on_sale_date"]),
                 printing=candidate.printing,
             )
             for row in rows
