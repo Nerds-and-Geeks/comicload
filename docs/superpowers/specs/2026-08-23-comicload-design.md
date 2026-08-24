@@ -587,3 +587,89 @@ today, verified before starting this feature.
 deployment target. If comicload ever needs a real web *offering* (not just a
 better review tool), it is a new adapter beside this one, not a rewrite of it —
 same as the CLI/web split principle 6 was written for in the first place.
+
+---
+
+## LLM-assisted quarantine resolution (2026-08-25)
+
+`comicload review --llm` (and a library entry point the web review tool can also
+call). Reads what's printed on a quarantined cover with a vision-capable Claude
+model and resolves it the same way a human would — by feeding the extracted text
+into the existing `ConfirmService.lookup()` path.
+
+### Why this reuses the review pipeline instead of being a `Signal`
+
+The obvious shape — a fourth `Signal` (barcode, human, ..., llm) voting inside
+`IdentifyService` alongside barcode — was rejected. Two reasons:
+
+1. **Cost control.** `IdentifyService` runs every enabled signal against every
+   photo, unconditionally. A `Signal`-shaped LLM step would call a paid API on
+   every photo in a scan, including the ones barcode already solved for free.
+   Structuring it as a post-scan pass over the quarantine queue means it only
+   ever runs on photos that actually need it.
+2. **Reuse.** `ConfirmService.lookup()` already does exactly what an LLM answer
+   needs: series+issue text → resolver → dedup → substring-tolerant series
+   matching (built and verified today against real quarantined pages). An LLM
+   step is "get the query text automatically" bolted onto code that already
+   works, not new resolution logic.
+
+### The governing rule, unchanged from the storyline-completion section above
+
+**The LLM proposes; the catalogue verifies.** The vision call returns a short
+text description of what's printed on the cover — not a confirmed identity. That
+text is only ever a `lookup()` query, exactly as if a person typed it. If it
+resolves to exactly one issue, the CLI's existing confidence-based rule applies:
+auto-confirm. Multiple matches or zero matches leaves the photo in quarantine,
+same as an inconclusive human answer would. An LLM hallucinating a plausible but
+wrong series/issue can only ever produce "no match" or a genuine match — it can
+never fabricate a catalogue entry, because it never touches `CatalogEntry`
+construction directly.
+
+### Why this specific need is no longer speculative
+
+Verified today, by eye, against a real scan's quarantine: reading the series and
+issue number directly off the cover art resolves every page barcode decoding
+could not — the three pages sharing a series-wide UPC (no way to tell issues
+apart without the printed number) and the three trade-paperback fronts with no
+barcode at all. This is the same 6 of 14 pages that motivated the `review` fixes
+earlier — an LLM step automates exactly the step a human was already doing
+successfully by hand.
+
+### Cost and scope
+
+Vision call on one cover ≈ 1.5–2k input tokens. At Haiku pricing this is a
+fraction of a cent per photo; a 14-page scan's whole quarantine costs under
+$0.05. Not worth building cost-control machinery for — the real constraint is
+correctness (the verify step), not spend.
+
+**Explicitly opt-in, never default-on:** requires an API key the user supplies
+(`ANTHROPIC_API_KEY`, the SDK's own standard resolution — no new secret-storage
+mechanism; keyring/`SecretStore` was deliberately stripped earlier as unused
+plumbing, and this feature does not justify reintroducing it for one env var).
+`[llm] enabled` in config defaults to `false`.
+
+### What changes, concretely
+
+- New dependency: `anthropic` SDK, as an optional extra (`comicload[llm]`),
+  matching the `[locg]` extra's pattern for Playwright.
+- New module, `comicload/llm/resolver.py`: one function, given cover image
+  bytes, returns a short text guess (series + issue, best-effort) or raises
+  `ComicloadError` on API failure — same shape every other lazily-imported
+  optional dependency in this codebase already follows (`zbar_decoder.py`,
+  `locg_sink.py`).
+- `ConfirmService.confirm()` gains a `signal: str = "human"` parameter (small,
+  additive) so the CSV `Tags` column correctly records `signal=llm` — knowing
+  which comics were machine-guessed vs. human-typed matters for trusting the
+  data later, the same reason `signal=barcode` vs `signal=human` already does.
+- `comicload review --llm` walks the quarantine automatically instead of
+  prompting; anything it can't resolve to one match is left for the ordinary
+  interactive wizard. Composable with the plain `comicload review` — an LLM
+  pass first, human pass for whatever's left, is the expected combined flow.
+- Config: `[llm] enabled = false`, `model = "claude-haiku-4-5"`.
+
+### Explicitly out of scope for this pass
+
+- No batching/concurrency tuning — one call per quarantined photo, sequential,
+  matching this project's "boring and correct over clever" default.
+- No retry/backoff policy beyond what the SDK does by default.
+- Does not touch the barcode/human signal paths at all.
