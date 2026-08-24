@@ -53,3 +53,14 @@ def test_barcode_lookup_still_uses_its_index(tmp_path):
     )
     plan = _plan(tmp_path / "d.sqlite", sql, ("759606084570",))
     assert "idx_issue_barcode" in plan, f"barcode index unused; plan: {plan}"
+
+
+def test_barcode_prefix_fallback_seeks_rather_than_scans(tmp_path):
+    """LIKE 'prefix%' walks the whole barcode index (SCAN); half-open range bounds
+    seek straight to the prefix (SEARCH). Matters at 2.5M issues, once per photo."""
+    plan = _plan(
+        tmp_path / "e.sqlite",
+        "SELECT i.id FROM issue i WHERE i.barcode >= ? AND i.barcode < ?",
+        ("761941343884", "761941343885"),
+    )
+    assert "SEARCH i" in plan and "SCAN" not in plan, plan

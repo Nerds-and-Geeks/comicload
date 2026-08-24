@@ -125,7 +125,16 @@ class SqliteIssueResolver:
             if not issues and len(candidate.barcode) == 12:
                 # GCD stores UPC + EAN-5 supplement concatenated (17 digits). A scan
                 # that only read the bare UPC still matches those rows by prefix.
-                issues = self._run(self._scoped("i.barcode LIKE ?", f"{candidate.barcode}%", scope))
+                # Half-open range instead of LIKE: LIKE walks the whole barcode
+                # index; the range seeks straight to the prefix.
+                upper = candidate.barcode[:-1] + chr(ord(candidate.barcode[-1]) + 1)
+                query = self._with_scope(
+                    Query(select=_SELECT, order_by="i.id", limit=_MAX_MATCHES)
+                    .where("i.barcode >= ?", candidate.barcode)
+                    .where("i.barcode < ?", upper),
+                    scope,
+                )
+                issues = self._run(query)
             return issues
 
         query = Query(select=_SELECT, order_by="i.id", limit=_MAX_MATCHES)
