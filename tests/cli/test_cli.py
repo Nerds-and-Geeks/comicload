@@ -462,10 +462,10 @@ def test_review_llm_flag_auto_confirms_single_match(tmp_path, monkeypatch):
     )
     repo.save([quarantined])
 
-    # Mock describe_cover to return "Alex + Ada #2"
+    # Mock describe_cover to return ("Alex + Ada #2", None)
     monkeypatch.setattr(
         "comicload.quarantine.llm.describe_cover",
-        lambda img, cfg: "Alex + Ada #2",
+        lambda img, cfg: ("Alex + Ada #2", None),
     )
 
     result = runner.invoke(

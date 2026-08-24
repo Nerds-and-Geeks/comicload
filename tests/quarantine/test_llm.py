@@ -7,12 +7,20 @@ from comicload.quarantine.llm import describe_cover
 
 def test_describe_cover_returns_empty_when_no_image():
     config = LlmConfig(enabled=True, api_key="secret")
-    assert describe_cover(None, config) == ""
+    query, err = describe_cover(None, config)
+    assert query == ""
+    assert err is not None
 
 
-def test_describe_cover_returns_empty_when_no_api_key():
+def test_describe_cover_returns_empty_when_no_api_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
     config = LlmConfig(enabled=True, api_key="")
-    assert describe_cover(b"pixels", config) == ""
+    query, err = describe_cover(b"pixels", config)
+    assert query == ""
+    assert "No API key found" in (err or "")
 
 
 def test_describe_cover_anthropic_provider(monkeypatch):
@@ -32,9 +40,10 @@ def test_describe_cover_anthropic_provider(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
 
-    res = describe_cover(b"png_pixels", config)
+    query, err = describe_cover(b"png_pixels", config)
 
-    assert res == "Superman #35 2024"
+    assert query == "Superman #35 2024"
+    assert err is None
     assert len(called_req) == 1
     assert called_req[0].headers["X-api-key"] == "sk-test-123"
 
@@ -56,9 +65,10 @@ def test_describe_cover_openai_provider(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
 
-    res = describe_cover(b"jpg_pixels", config)
+    query, err = describe_cover(b"jpg_pixels", config)
 
-    assert res == "Alex + Ada #2"
+    assert query == "Alex + Ada #2"
+    assert err is None
     assert len(called_req) == 1
     assert called_req[0].headers["Authorization"] == "Bearer sk-openai-456"
 
@@ -71,4 +81,6 @@ def test_describe_cover_fails_closed_on_network_error(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
 
-    assert describe_cover(b"pixels", config) == ""
+    query, err = describe_cover(b"pixels", config)
+    assert query == ""
+    assert err is not None

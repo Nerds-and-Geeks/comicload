@@ -25,24 +25,36 @@ PROMPT = (
 )
 
 
-def describe_cover(image_bytes: bytes | None, config: LlmConfig) -> str:
-    """Use vision API to extract comic title and issue number from cover image bytes."""
+def describe_cover(image_bytes: bytes | None, config: LlmConfig) -> tuple[str, str | None]:
+    """Use vision API to extract comic title and issue number from cover image bytes.
+
+    Returns (query_string, error_message).
+    """
     if not image_bytes:
-        return ""
+        return "", "No cover image bytes provided"
 
     api_key = config.resolved_api_key()
     if not api_key:
-        return ""
+        env_var = (
+            "ANTHROPIC_API_KEY"
+            if config.provider == "anthropic"
+            else "OPENAI_API_KEY"
+            if config.provider == "openai"
+            else "GEMINI_API_KEY"
+        )
+        return "", f"No API key found. Set {env_var} environment variable."
 
     try:
         if config.provider == "anthropic":
-            return _call_anthropic(image_bytes, config, api_key)
+            return _call_anthropic(image_bytes, config, api_key), None
         elif config.provider == "openai":
-            return _call_openai(image_bytes, config, api_key)
-    except Exception:
-        return ""
+            return _call_openai(image_bytes, config, api_key), None
+    except urllib.error.HTTPError as exc:
+        return "", f"HTTP Error {exc.code}: {exc.reason}"
+    except Exception as exc:
+        return "", f"API Error: {exc}"
 
-    return ""
+    return "", "Unsupported LLM provider"
 
 
 def _call_anthropic(image_bytes: bytes, config: LlmConfig, api_key: str) -> str:

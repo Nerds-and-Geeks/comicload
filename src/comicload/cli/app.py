@@ -286,7 +286,14 @@ def review(
         llm_auto_confirmed = 0
         remaining_pending: list[IdentifyResult] = []
         for result in pending:
-            query = describe_cover(result.image, config.llm)
+            query, err = describe_cover(result.image, config.llm)
+            if err:
+                console.print(
+                    f"[yellow]⚠ LLM vision ({escape(result.filename)}): {escape(err)}[/yellow]"
+                )
+                remaining_pending.append(result)
+                continue
+
             if query:
                 matches = service.lookup(query)
                 if len(matches) == 1:
@@ -299,6 +306,16 @@ def review(
                     llm_auto_confirmed += 1
                     identified += 1
                     continue
+                elif matches:
+                    console.print(
+                        f"[dim]🤖 LLM extracted '{escape(query)}' ({escape(result.filename)}) ➔ "
+                        f"{len(matches)} candidate matches (needs human review)[/dim]"
+                    )
+                else:
+                    console.print(
+                        f"[dim]🤖 LLM extracted '{escape(query)}' ({escape(result.filename)}) ➔ "
+                        "0 matches in catalogue[/dim]"
+                    )
             remaining_pending.append(result)
         pending = remaining_pending
         if llm_auto_confirmed > 0:
