@@ -27,12 +27,77 @@ from pyzbar import pyzbar  # noqa: E402
 
 from comicload.signals.ean5 import decode_ean5  # noqa: E402
 
-_MAIN_TYPES = {"EAN13", "UPCA", "EAN8", "UPCE"}
 
+def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
+    """Decode UPC/EAN barcodes from cover photo bytes using pyzbar.
 
-def _extract_barcodes(
-    decoded_from: Image.Image, found_symbols: Sequence[Any]
-) -> list[DecodedBarcode]:
+    Tries full cover image at 0° first — instant for the common case, a right-side-up
+    photo. If that finds nothing, works from a bounded copy (long side capped, cheap
+    to rotate and re-decode) trying 90°/180°/270° and corner crops with equalization.
+    Only symbol types real comic barcodes use are trusted as the main code; pyzbar
+    has misread unrelated print texture as other symbologies (Interleaved 2-of-5,
+    seen on a real scan) sharing the page with a genuine, correct EAN13.
+    """
+    raw_image = Image.open(io.BytesIO(image_bytes))
+    image = ImageOps.exif_transpose(raw_image)
+
+    # 1. Fast 0° pass on full-res image (instant for 95% of right-side-up covers)
+    found_symbols: list[Any] = list(pyzbar.decode(image))
+    decoded_from: Image.Image = image
+
+    # 2. If 0° fails, work from a bounded copy before rotating/cropping
+    if not found_symbols:
+        work_image = image.copy()
+        work_image.thumbnail((3000, 3000), Image.Resampling.BILINEAR)
+
+        for angle in (0, 90, 180, 270):
+            oriented = work_image if angle == 0 else work_image.rotate(angle, expand=True)
+            symbols = list(pyzbar.decode(oriented))
+            if symbols:
+                found_symbols = symbols
+                decoded_from = oriented
+                break
+
+            equalized_full = ImageOps.equalize(oriented.convert("L"))
+            symbols = list(pyzbar.decode(equalized_full))
+            if symbols:
+                found_symbols = symbols
+                decoded_from = equalized_full
+                break
+
+            w, h = oriented.size
+            crop_regions = [
+                oriented.crop((int(w * 0.6), int(h * 0.6), w, h)),
+                oriented.crop((0, int(h * 0.6), int(w * 0.4), h)),
+                oriented.crop((0, 0, int(w * 0.4), int(h * 0.4))),
+                oriented.crop((0, int(h * 0.5), w, h)),
+            ]
+            for region in crop_regions:
+                attempts = (
+                    ImageOps.equalize(region.convert("L")),
+                    ImageOps.equalize(
+                        region.resize(
+                            (region.width * 2, region.height * 2), Image.Resampling.LANCZOS
+                        ).convert("L")
+                    ),
+                )
+                for attempt in attempts:
+                    symbols = list(pyzbar.decode(attempt))
+                    if symbols:
+                        found_symbols = symbols
+                        decoded_from = attempt
+                        break
+                if found_symbols:
+                    break
+            if found_symbols:
+                break
+
+    # Comic covers only ever carry UPC/EAN codes. pyzbar occasionally misreads
+    # unrelated print texture as an unrelated symbology (seen on a real scan: a
+    # genuine EAN13 alongside a spurious "I25" read from the same page) — trusting
+    # any symbol of any type let the garbage one silently overwrite the real code.
+    _MAIN_TYPES = {"EAN13", "UPCA", "EAN8", "UPCE"}
+
     found: list[DecodedBarcode] = []
     main_symbol: Any = None
     main: str | None = None
@@ -44,83 +109,15 @@ def _extract_barcodes(
         elif result.type in _MAIN_TYPES:
             main, main_symbol = value, result
     if main and supplement is None and main_symbol is not None:
+        # zbar cannot be made to read EAN-2/EAN-5 add-ons through pyzbar, and the
+        # supplement is what tells one issue of a series from another when the
+        # publisher reuses a single UPC. Decode it ourselves next to the main code.
+        # rects are relative to whichever image actually decoded — full frame on
+        # the first pass, a corner crop on the retry path
         supplement = _decode_addon(decoded_from, main_symbol.rect)
     if main:
         found.append((main, supplement))
     return found
-
-
-def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
-    """Decode UPC/EAN barcodes from cover photo bytes using pyzbar.
-
-    Evaluates 0°, 90°, 180°, 270° rotation angles and equalized corner crops.
-    Ensures EAN-5 supplement barcodes are decoded to populate candidate issue numbers.
-    """
-    raw_image = Image.open(io.BytesIO(image_bytes))
-    image = ImageOps.exif_transpose(raw_image)
-
-    valid_types = {"EAN13", "UPCA", "EAN5", "UPCE", "ISBN13", "EAN8"}
-
-    found_symbols: list[Any] = []
-    decoded_from: Image.Image = image
-    best_extracted: Sequence[DecodedBarcode] = []
-
-    for angle in (0, 90, 180, 270):
-        oriented = image if angle == 0 else image.rotate(angle, expand=True)
-        symbols = [s for s in pyzbar.decode(oriented) if s.type in valid_types or not s.type]
-        if symbols:
-            extracted = _extract_barcodes(oriented, symbols)
-            if extracted and extracted[0][1] is not None:
-                return extracted
-            if not best_extracted and extracted:
-                best_extracted = extracted
-                found_symbols = symbols
-                decoded_from = oriented
-
-        equalized_full = ImageOps.equalize(oriented.convert("L"))
-        symbols = [s for s in pyzbar.decode(equalized_full) if s.type in valid_types or not s.type]
-        if symbols:
-            extracted = _extract_barcodes(equalized_full, symbols)
-            if extracted and extracted[0][1] is not None:
-                return extracted
-            if not best_extracted and extracted:
-                best_extracted = extracted
-                found_symbols = symbols
-                decoded_from = equalized_full
-
-        w, h = oriented.size
-        crop_regions = [
-            oriented.crop((int(w * 0.6), int(h * 0.6), w, h)),
-            oriented.crop((0, int(h * 0.6), int(w * 0.4), h)),
-            oriented.crop((0, 0, int(w * 0.4), int(h * 0.4))),
-            oriented.crop((0, int(h * 0.5), w, h)),
-        ]
-        for region in crop_regions:
-            attempts = (
-                ImageOps.equalize(region.convert("L")),
-                ImageOps.equalize(
-                    region.resize(
-                        (region.width * 3, region.height * 3), Image.Resampling.LANCZOS
-                    ).convert("L")
-                ),
-            )
-            for attempt in attempts:
-                symbols = [s for s in pyzbar.decode(attempt) if s.type in valid_types or not s.type]
-                if symbols:
-                    extracted = _extract_barcodes(attempt, symbols)
-                    if extracted and extracted[0][1] is not None:
-                        return extracted
-                    if not best_extracted and extracted:
-                        best_extracted = extracted
-                        found_symbols = symbols
-                        decoded_from = attempt
-                        break
-            if best_extracted and best_extracted[0][1] is not None:
-                break
-
-    if best_extracted:
-        return best_extracted
-    return _extract_barcodes(decoded_from, found_symbols)
 
 
 # How far past the main symbol the add-on can sit, in multiples of its long side.
