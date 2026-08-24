@@ -31,8 +31,12 @@ from comicload.signals.ean5 import decode_ean5  # noqa: E402
 def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
     """Decode UPC/EAN barcodes from cover photo bytes using pyzbar.
 
-    Tries full cover image at 0° first. If 0° yields 0 symbols, resizes to a bounded
-    working frame (max 1200px) and evaluates 90°, 180°, 270° rotation angles and corner crops.
+    Tries full cover image at 0° first — instant for the common case, a right-side-up
+    photo. If that finds nothing, works from a bounded copy (long side capped, cheap
+    to rotate and re-decode) trying 90°/180°/270° and corner crops with equalization.
+    Only symbol types real comic barcodes use are trusted as the main code; pyzbar
+    has misread unrelated print texture as other symbologies (Interleaved 2-of-5,
+    seen on a real scan) sharing the page with a genuine, correct EAN13.
     """
     raw_image = Image.open(io.BytesIO(image_bytes))
     image = ImageOps.exif_transpose(raw_image)
@@ -41,10 +45,10 @@ def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
     found_symbols: list[Any] = list(pyzbar.decode(image))
     decoded_from: Image.Image = image
 
-    # 2. If 0° fails, scale image to a max 1200px working frame before rotating/cropping
+    # 2. If 0° fails, work from a bounded copy before rotating/cropping
     if not found_symbols:
         work_image = image.copy()
-        work_image.thumbnail((1200, 1200), Image.Resampling.BILINEAR)
+        work_image.thumbnail((3000, 3000), Image.Resampling.BILINEAR)
 
         for angle in (0, 90, 180, 270):
             oriented = work_image if angle == 0 else work_image.rotate(angle, expand=True)
@@ -88,15 +92,21 @@ def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
             if found_symbols:
                 break
 
+    # Comic covers only ever carry UPC/EAN codes. pyzbar occasionally misreads
+    # unrelated print texture as an unrelated symbology (seen on a real scan: a
+    # genuine EAN13 alongside a spurious "I25" read from the same page) — trusting
+    # any symbol of any type let the garbage one silently overwrite the real code.
+    _MAIN_TYPES = {"EAN13", "UPCA", "EAN8", "UPCE"}
+
     found: list[DecodedBarcode] = []
     main_symbol: Any = None
     main: str | None = None
     supplement: str | None = None
     for result in found_symbols:
         value = result.data.decode("ascii", errors="ignore")
-        if len(value) == 5:
+        if len(value) == 5 and result.type in ("EAN5", "I25", ""):
             supplement = value
-        elif len(value) >= 8:
+        elif result.type in _MAIN_TYPES:
             main, main_symbol = value, result
     if main and supplement is None and main_symbol is not None:
         # zbar cannot be made to read EAN-2/EAN-5 add-ons through pyzbar, and the
