@@ -13,12 +13,11 @@ from comicload.adapters.cli.render import console, import_panel, review_table, s
 from comicload.core.errors import ComicloadError
 from comicload.core.models import Bucket, Scope
 from comicload.core.registry import get_signal
-from comicload.infra.config import Config, load_config, save_config
+from comicload.infra.config import Config, load_config, save_config, sqlite_path
 from comicload.infra.photos import LocalFolderPhotoSource
 from comicload.infra.sinks.csv_sink import CsvSink, read_csv, validate_csv
-from comicload.infra.storage.catalogue import SqliteRepository
+from comicload.infra.storage.factory import open_repository, open_resolver
 from comicload.infra.storage.gcd_loader import load_dump
-from comicload.infra.storage.gcd_repo import SqliteIssueResolver
 from comicload.services.export import ExportService
 from comicload.services.identify import IdentifyService
 
@@ -38,6 +37,13 @@ def _fail(message: str) -> typer.Exit:
     """Print a message written for a comic collector, and stop with a non-zero status."""
     console.print(f"[red]{escape(message)}[/red]")
     return typer.Exit(code=1)
+
+
+def _as_dsn(value: str) -> str:
+    """Accept either a storage address or the bare file path collectors have always typed."""
+    if "://" in value:
+        return value
+    return f"sqlite://{Path(value).expanduser()}"
 
 
 def _scope(publisher: str | None, years: str | None) -> Scope:
@@ -60,15 +66,20 @@ def scan(
     years: Annotated[
         str | None, typer.Option("--years", help="Narrow to a year range, e.g. 1970-1985.")
     ] = None,
-    db: Annotated[Path | None, typer.Option("--db", help="Path to the metadata database.")] = None,
+    db: Annotated[
+        str | None, typer.Option("--db", help="Path or address of the metadata database.")
+    ] = None,
     catalogue_db: Annotated[
-        Path | None,
-        typer.Option("--catalogue-db", help="Path to your own catalogue of scan results."),
+        str | None,
+        typer.Option(
+            "--catalogue-db", help="Path or address of your own catalogue of scan results."
+        ),
     ] = None,
 ) -> None:
     """Identify every comic photo in a folder and write an import file."""
     config = load_config()
-    database = db or config.gcd_db_path()
+    catalog = _as_dsn(db) if db else config.catalog_dsn()
+    catalogue = _as_dsn(catalogue_db) if catalogue_db else config.catalogue_dsn()
 
     try:
         source = LocalFolderPhotoSource(folder)
@@ -79,7 +90,7 @@ def scan(
     signals = [get_signal(name) for name in config.signals.enabled]
     service = IdentifyService(
         signals=signals,
-        resolver=SqliteIssueResolver(database),
+        resolver=open_resolver(catalog),
         progress=RichProgressReporter(),
     )
 
@@ -89,7 +100,7 @@ def scan(
         raise _fail(str(exc)) from exc
 
     if results:
-        SqliteRepository(catalogue_db or config.catalogue_db_path()).save(results)
+        open_repository(catalogue).save(results)
 
     console.print(summary_table(results))
 
@@ -151,12 +162,13 @@ def import_csv(
 @app.command()
 def review(
     db: Annotated[
-        Path | None, typer.Option("--db", help="Path to your own catalogue of scan results.")
+        str | None,
+        typer.Option("--db", help="Path or address of your own catalogue of scan results."),
     ] = None,
 ) -> None:
     """Look at the comics comicload could not identify on its own."""
-    database = db or load_config().catalogue_db_path()
-    pending = SqliteRepository(database).pending_review()
+    catalogue = _as_dsn(db) if db else load_config().catalogue_dsn()
+    pending = open_repository(catalogue).pending_review()
 
     if not pending:
         console.print(
@@ -171,11 +183,11 @@ def review(
 @catalog_app.command("sync")
 def catalog_sync(
     dump: Annotated[Path, typer.Argument(help="Path to the downloaded GCD .sql dump.")],
-    db: Annotated[Path | None, typer.Option("--db", help="Where to build the database.")] = None,
+    db: Annotated[str | None, typer.Option("--db", help="Where to build the database.")] = None,
 ) -> None:
     """Build the local comic metadata database from a Grand Comics Database dump."""
-    target = db or load_config().gcd_db_path()
     try:
+        target = sqlite_path(_as_dsn(db)) if db else load_config().gcd_db_path()
         counts = load_dump(dump, target)
     except ComicloadError as exc:
         raise _fail(str(exc)) from exc

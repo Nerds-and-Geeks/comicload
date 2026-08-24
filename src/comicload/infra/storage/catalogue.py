@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from comicload.core.models import Bucket, Candidate, CatalogEntry, IdentifyResult
+from comicload.core.storage_registry import Dsn, register_repository
 
 SCHEMA_VERSION = 1
 
@@ -75,11 +76,16 @@ def _candidates_from_json(blob: str) -> tuple[Candidate, ...]:
     return tuple(Candidate(**raw) for raw in json.loads(blob or "[]"))
 
 
+@register_repository("sqlite")
 class SqliteRepository:
     """Stores identification outcomes so the review queue survives between runs."""
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
+
+    @classmethod
+    def from_dsn(cls, dsn: Dsn) -> SqliteRepository:
+        return cls(Path(dsn.target))
 
     def _connect(self) -> sqlite3.Connection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)

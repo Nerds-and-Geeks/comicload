@@ -7,6 +7,7 @@ from platformdirs import user_config_path, user_data_path
 from pydantic import BaseModel, Field, ValidationError
 
 from comicload.core.errors import ConfigError
+from comicload.core.storage_registry import parse_dsn
 
 
 class ExportConfig(BaseModel):
@@ -18,9 +19,11 @@ class LocgConfig(BaseModel):
     confirm_before_import: bool = True
 
 
-class CatalogConfig(BaseModel):
-    gcd_db: str = ""
-    catalogue_db: str = ""
+class StorageConfig(BaseModel):
+    """Storage addresses, not paths: the scheme picks the backend, the rest is its business."""
+
+    catalog: str = ""  # the GCD mirror — disposable
+    catalogue: str = ""  # the user's own results — precious
 
 
 class ScanConfig(BaseModel):
@@ -51,25 +54,44 @@ class LlmConfig(BaseModel):
 class Config(BaseModel):
     export: ExportConfig = Field(default_factory=ExportConfig)
     locg: LocgConfig = Field(default_factory=LocgConfig)
-    catalog: CatalogConfig = Field(default_factory=CatalogConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
     scan: ScanConfig = Field(default_factory=ScanConfig)
     signals: SignalsConfig = Field(default_factory=SignalsConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
 
-    def gcd_db_path(self) -> Path:
-        if self.catalog.gcd_db:
-            return Path(self.catalog.gcd_db).expanduser()
-        return user_data_path("comicload") / "gcd.sqlite"
+    def catalog_dsn(self) -> str:
+        if self.storage.catalog:
+            return self.storage.catalog
+        return f"sqlite://{user_data_path('comicload') / 'gcd.sqlite'}"
 
-    def catalogue_db_path(self) -> Path:
-        if self.catalog.catalogue_db:
-            return Path(self.catalog.catalogue_db).expanduser()
-        return user_data_path("comicload") / "comicload.sqlite"
+    def catalogue_dsn(self) -> str:
+        if self.storage.catalogue:
+            return self.storage.catalogue
+        return f"sqlite://{user_data_path('comicload') / 'comicload.sqlite'}"
+
+    def gcd_db_path(self) -> Path:
+        """`catalog sync` writes a SQLite file, so it needs a real path, not just an address."""
+        return sqlite_path(self.catalog_dsn())
 
     def locg_state_path(self) -> Path:
         if self.locg.state_file:
             return Path(self.locg.state_file).expanduser()
         return user_config_path("comicload") / "locg_state.json"
+
+
+def sqlite_path(dsn: str) -> Path:
+    """The local file behind a `sqlite://` address.
+
+    Only for work that genuinely needs a file on disk — building the GCD mirror. Everything
+    else goes through the storage registry and never learns whether a file is involved.
+    """
+    parsed = parse_dsn(dsn)
+    if parsed.scheme != "sqlite":
+        raise ConfigError(
+            f"'comicload catalog sync' builds a local SQLite file, but {dsn!r} is not a "
+            f"sqlite:// address; point the catalog at a sqlite:// address to sync it"
+        )
+    return Path(parsed.target)
 
 
 def default_config_path() -> Path:

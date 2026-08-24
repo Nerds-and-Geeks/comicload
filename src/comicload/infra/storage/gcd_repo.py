@@ -6,6 +6,7 @@ from pathlib import Path
 
 from comicload.core.errors import CatalogError
 from comicload.core.models import Candidate, Issue, Scope
+from comicload.core.storage_registry import Dsn, register_resolver
 
 _BASE_QUERY = """
 SELECT i.id, p.name, s.name, i.number, i.on_sale_date
@@ -24,6 +25,7 @@ def _parse_date(raw: str | None) -> date | None:
         return None
 
 
+@register_resolver("sqlite")
 class SqliteIssueResolver:
     """Resolves candidates against the local GCD mirror.
 
@@ -32,6 +34,10 @@ class SqliteIssueResolver:
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = Path(db_path)
+
+    @classmethod
+    def from_dsn(cls, dsn: Dsn) -> SqliteIssueResolver:
+        return cls(Path(dsn.target))
 
     def _connect(self) -> sqlite3.Connection:
         if not self._db_path.exists():
