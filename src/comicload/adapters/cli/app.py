@@ -108,7 +108,13 @@ def scan(
     except FileNotFoundError as exc:
         raise _fail(str(exc)) from exc
 
-    signals = [get_signal(name) for name in config.signals.enabled]
+    try:
+        signals = [get_signal(name) for name in config.signals.enabled]
+    except KeyError as exc:
+        raise _fail(
+            f"{exc.args[0]}\nEdit 'signals.enabled' in your settings "
+            "(see 'comicload config show') and scan again."
+        ) from exc
     service = IdentifyService(
         signals=signals,
         resolver=open_resolver(catalog),

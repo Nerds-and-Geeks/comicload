@@ -6,6 +6,7 @@ import comicload.adapters.cli.app as app_module
 from comicload.adapters.cli.app import app
 from comicload.core.errors import ComicloadError
 from comicload.core.models import Candidate
+from comicload.infra.config import load_config
 from comicload.infra.sinks.csv_sink import COLUMNS, read_csv
 from comicload.infra.storage.catalogue import SqliteRepository
 
@@ -292,3 +293,17 @@ def test_scanning_a_second_folder_keeps_the_first_folder_in_the_csv(tmp_path, mo
 
     titles = {entry.full_title for entry in read_csv(out)}
     assert titles == {"The Punisher #12", "Alex + Ada #2"}
+
+
+def test_an_unknown_signal_name_is_a_message_not_a_traceback(tmp_path, monkeypatch):
+    config = load_config(tmp_path / "missing.toml")
+    config.signals.enabled = ["telepathy"]
+    monkeypatch.setattr(app_module, "load_config", lambda *args, **kwargs: config)
+    photos = tmp_path / "photos"
+    photos.mkdir()
+
+    result = runner.invoke(app, ["scan", str(photos), "--out", str(tmp_path / "out.csv")])
+
+    assert result.exit_code != 0
+    assert "telepathy" in result.stdout
+    assert "signals.enabled" in result.stdout
