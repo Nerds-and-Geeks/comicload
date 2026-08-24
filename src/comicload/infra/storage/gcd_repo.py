@@ -19,7 +19,8 @@ SELECT i.id AS issue_id,
        p.name AS publisher_name,
        s.name AS series_name,
        i.number AS issue_number,
-       i.on_sale_date AS on_sale_date
+       i.on_sale_date AS on_sale_date,
+       s.year_began AS series_year
 FROM issue i
 JOIN series s ON s.id = i.series_id
 JOIN publisher p ON p.id = s.publisher_id
@@ -137,7 +138,14 @@ class SqliteIssueResolver:
                 issues = self._run(query)
             return issues
 
-        query = Query(select=_SELECT, order_by="i.id", limit=_MAX_MATCHES)
+        # A person reads this list top-down: rows with a real on-sale date come
+        # first, newest first — foreign reprints with no date sink to the bottom
+        # instead of burying the answer.
+        query = Query(
+            select=_SELECT,
+            order_by="(i.on_sale_date IS NULL OR i.on_sale_date = ''), i.on_sale_date DESC, i.id",
+            limit=_MAX_MATCHES,
+        )
         if candidate.series:
             query = query.where("s.name = ? COLLATE NOCASE", candidate.series)
         if candidate.issue_number:
@@ -171,6 +179,7 @@ class SqliteIssueResolver:
                 series=row["series_name"],
                 issue_number=row["issue_number"],
                 on_sale_date=_parse_date(row["on_sale_date"]),
+                series_year=row["series_year"],
             )
             for row in rows
         ]

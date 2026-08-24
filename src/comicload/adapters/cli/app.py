@@ -260,7 +260,8 @@ def review(
 
     console.print(
         f"[bold]{len(pending)} comic(s) in quarantine.[/bold] "
-        "Type what you can see on each cover, e.g. [bold]Superman #35[/bold].\n"
+        "Type what you can see on each cover, e.g. [bold]Superman #35[/bold] "
+        "(add a year to narrow: [bold]Superman #35 2026[/bold]).\n"
     )
     identified = 0
     for position, result in enumerate(pending, start=1):
@@ -291,9 +292,11 @@ def review(
 
             for index, issue in enumerate(issues, start=1):
                 date_text = issue.on_sale_date.isoformat() if issue.on_sale_date else "date unknown"
+                series_year = f" ({issue.series_year})" if issue.series_year else ""
                 console.print(
                     f"  [bold]{index}[/bold]  {escape(issue.publisher)} · "
-                    f"{escape(issue.series)} #{escape(issue.issue_number)} · {date_text}"
+                    f"{escape(issue.series)}{series_year} #{escape(issue.issue_number)}"
+                    f" · {date_text}"
                 )
             choice = typer.prompt("Which one? (number, or s to search again)", default="1").strip()
             if choice.lower() == "s":

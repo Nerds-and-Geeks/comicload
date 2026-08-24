@@ -51,7 +51,7 @@ def test_a_year_scope_finds_matches_beyond_the_row_limit(thirty_issue_run):
 
     issues = thirty_issue_run.resolve(candidate, Scope(year_from=1980, year_to=1980))
 
-    assert [issue.gcd_id for issue in issues] == [200, 201]
+    assert {issue.gcd_id for issue in issues} == {200, 201}
 
 
 def test_an_unscoped_query_still_stops_at_the_row_limit(thirty_issue_run):
@@ -97,8 +97,8 @@ def test_a_year_scope_excludes_issues_outside_it(tmp_path):
     )
     candidate = Candidate(signal="ocr", confidence=0.6, series="Detective Comics", issue_number="7")
 
-    assert [i.gcd_id for i in resolver.resolve(candidate, Scope(year_from=1980))] == [2, 3]
-    assert [i.gcd_id for i in resolver.resolve(candidate, Scope(year_to=1980))] == [1, 2]
+    assert {i.gcd_id for i in resolver.resolve(candidate, Scope(year_from=1980))} == {2, 3}
+    assert {i.gcd_id for i in resolver.resolve(candidate, Scope(year_to=1980))} == {1, 2}
 
 
 # --- columns are read by name, so the SELECT list can be reordered -------------
@@ -106,8 +106,9 @@ def test_a_year_scope_excludes_issues_outside_it(tmp_path):
 
 REORDERED_SELECT = """
 SELECT i.on_sale_date AS on_sale_date,
-       s.name AS series_name,
+       s.year_began AS series_year,
        i.number AS issue_number,
+       s.name AS series_name,
        p.name AS publisher_name,
        i.id AS issue_id
 FROM issue i
@@ -242,3 +243,28 @@ def test_a_bare_upc_prefix_matches_gcds_17_digit_barcode(tmp_path):
     candidate = Candidate(signal="barcode", confidence=0.9, barcode="761941343884")
     issues = resolver.resolve(candidate, Scope())
     assert [issue.issue_number for issue in issues] == ["957"]
+
+
+def test_dated_matches_outrank_undated_reprints(tmp_path):
+    """Foreign reprints with no on-sale date must not bury the real answer."""
+    db = tmp_path / "gcd.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript(SCHEMA)
+    conn.execute("INSERT INTO publisher VALUES (1,'DC'),(2,'Zinco'),(3,'Play Press')")
+    conn.execute(
+        "INSERT INTO series VALUES (10,'Superman',1,2023),(11,'Superman',2,1984),"
+        "(12,'Superman',3,1993)"
+    )
+    conn.execute(
+        "INSERT INTO issue VALUES (5,'28',11,NULL,NULL),(6,'28',12,'',NULL),"
+        "(7,'28',10,'2025-07-23',NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    issues = SqliteIssueResolver(db).resolve(
+        Candidate(signal="human", confidence=1.0, series="Superman", issue_number="28"),
+        Scope(),
+    )
+    assert issues[0].publisher == "DC"
+    assert issues[0].on_sale_date is not None

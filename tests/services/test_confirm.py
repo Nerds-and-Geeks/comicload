@@ -37,20 +37,29 @@ class RecordingRepo:
 
 
 def test_parse_series_and_number():
-    candidate = parse_query("Superman #35")
+    candidate, scope = parse_query("Superman #35")
     assert candidate.series == "Superman"
     assert candidate.issue_number == "35"
     assert candidate.signal == "human"
+    assert scope.year_from is None
 
 
 def test_parse_tolerates_missing_hash_and_case():
-    assert parse_query("superman 35").series == "superman"
+    candidate, _ = parse_query("superman 35")
+    assert candidate.series == "superman"
 
 
 def test_parse_keeps_multiword_series():
-    candidate = parse_query("Alex + Ada #2")
+    candidate, _ = parse_query("Alex + Ada #2")
     assert candidate.series == "Alex + Ada"
     assert candidate.issue_number == "2"
+
+
+def test_parse_trailing_year_narrows_the_scope():
+    candidate, scope = parse_query("Superman #28 2025")
+    assert candidate.issue_number == "28"
+    assert scope.year_from == 2025
+    assert scope.year_to == 2025
 
 
 def test_parse_rejects_number_free_text():

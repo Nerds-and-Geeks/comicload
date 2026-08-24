@@ -55,6 +55,8 @@ class Issue:
     issue_number: str
     on_sale_date: date | None = None
     printing: str | None = None
+    series_year: int | None = None
+    """Year the series began — how collectors tell Superman (1939) from Superman (2023)."""
 
     def to_catalog_entry(self) -> CatalogEntry:
         title = f"{self.series} #{self.issue_number}"

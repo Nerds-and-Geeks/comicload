@@ -14,21 +14,27 @@ import re
 from comicload.core.models import Bucket, Candidate, IdentifyResult, Issue, Scope
 from comicload.core.ports import IssueResolver, Repository
 
-# "Superman #35", "superman 35", "Alex + Ada #2" — series, then a trailing number
-_QUERY = re.compile(r"^\s*(?P<series>.+?)\s*#?\s*(?P<number>\d[\w.½]*)\s*$")
+# "Superman #35", "superman 35 2014", "Alex + Ada #2" — series, issue, optional year
+_QUERY = re.compile(
+    r"^\s*(?P<series>.+?)\s*#?\s*(?P<number>\d[\w.½]*)"
+    r"(?:\s+(?P<year>(?:18|19|20)\d{2}))?\s*$"
+)
 
 
-def parse_query(text: str) -> Candidate | None:
-    """Turn what a person typed into a lookup candidate, or None if unparseable."""
+def parse_query(text: str) -> tuple[Candidate, Scope] | None:
+    """Turn what a person typed into a lookup candidate plus a narrowing scope."""
     match = _QUERY.match(text)
     if not match:
         return None
-    return Candidate(
+    candidate = Candidate(
         signal="human",
         confidence=1.0,
         series=match.group("series"),
         issue_number=match.group("number"),
     )
+    year = match.group("year")
+    scope = Scope(year_from=int(year), year_to=int(year)) if year else Scope()
+    return candidate, scope
 
 
 class ConfirmService:
@@ -38,12 +44,13 @@ class ConfirmService:
         self._resolver = resolver
         self._repository = repository
 
-    def lookup(self, text: str, scope: Scope | None = None) -> list[Issue]:
+    def lookup(self, text: str) -> list[Issue]:
         """Issues matching what the person typed, best first. Empty if nothing matches."""
-        candidate = parse_query(text)
-        if candidate is None:
+        parsed = parse_query(text)
+        if parsed is None:
             return []
-        return self._resolver.resolve(candidate, scope or Scope())
+        candidate, scope = parsed
+        return self._resolver.resolve(candidate, scope)
 
     def confirm(self, result: IdentifyResult, issue: Issue) -> IdentifyResult:
         """Record the person's identification. The pixels are released — the comic is known."""
