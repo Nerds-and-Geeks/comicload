@@ -11,9 +11,13 @@ from comicload.core.registry import (
 
 @pytest.fixture(autouse=True)
 def clean_registry():
+    """Isolate registry mutations for this test without wiping signals registered
+    elsewhere (e.g. real signals registered by importing infra.signals)."""
+    original = dict(signal_registry)
     signal_registry.clear()
     yield
     signal_registry.clear()
+    signal_registry.update(original)
 
 
 def test_register_and_retrieve_signal():
