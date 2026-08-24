@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from comicload.infra.photos import LocalFolderPhotoSource
@@ -53,7 +55,6 @@ def test_byte_identical_files_yield_a_single_photo(tmp_path):
 
 def test_the_tree_is_walked_only_once(folder, monkeypatch):
     """count() and photos() are both called on every scan; walking twice doubles the wait."""
-    from pathlib import Path
 
     walks = []
     real_rglob = Path.rglob

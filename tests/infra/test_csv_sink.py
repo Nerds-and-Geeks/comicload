@@ -3,6 +3,7 @@ from datetime import date
 from pathlib import Path
 
 from comicload.core.models import CatalogEntry
+from comicload.core.registry import available_sinks
 from comicload.infra.sinks.csv_sink import COLUMNS, CsvSink, read_csv, validate_csv
 
 FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "locg_export_header.csv"
@@ -80,6 +81,5 @@ def test_validate_reports_missing_required_field(tmp_path):
 
 
 def test_sink_is_registered():
-    from comicload.core.registry import available_sinks
 
     assert "csv" in available_sinks()

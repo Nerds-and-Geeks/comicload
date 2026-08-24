@@ -1,9 +1,13 @@
+import typing
 from pathlib import Path
 
 import pytest
+from mypy import api
 
+from comicload.core.ports import IssueResolver, Repository
 from comicload.core.storage_registry import (
     open_repository,
+    open_resolver,
     parse_dsn,
     register_repository,
     repository_registry,
@@ -95,19 +99,12 @@ def test_duplicate_scheme_registration_is_rejected():
 
 def test_open_repository_is_typed_as_the_port_not_any():
     """Returning Any here switched off mypy at exactly the boundary the port guards."""
-    import typing
-
-    from comicload.core.ports import IssueResolver, Repository
-    from comicload.core.storage_registry import open_resolver
-
     assert typing.get_type_hints(open_repository)["return"] is Repository
     assert typing.get_type_hints(open_resolver)["return"] is IssueResolver
 
 
 def test_mypy_rejects_a_call_the_repository_port_does_not_have(tmp_path, monkeypatch):
     """The proof that type checking is really back on at the storage boundary."""
-    from mypy import api
-
     src = Path(__file__).resolve().parent.parent.parent / "src"
     monkeypatch.setenv("MYPYPATH", str(src))
 

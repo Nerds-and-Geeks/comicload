@@ -312,8 +312,6 @@ def test_an_unknown_signal_name_is_a_message_not_a_traceback(tmp_path, monkeypat
 def test_scan_wires_a_real_decoder_into_the_barcode_signal(tmp_path, monkeypatch):
     """A bare get_signal("barcode") leaves decoder=None: every test passes on stubs
     while every production scan fails on every photo. The CLI must inject the decoder."""
-    from comicload.adapters.cli import app as app_module
-
     seen = {}
 
     def fake_decoder_factory():

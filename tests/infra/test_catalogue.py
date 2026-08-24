@@ -1,12 +1,13 @@
 import sqlite3
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from comicload.core.errors import CatalogError
 from comicload.core.models import Bucket, Candidate, CatalogEntry, IdentifyResult
 from comicload.infra.storage import catalogue
-from comicload.infra.storage.catalogue import SqliteRepository
+from comicload.infra.storage.catalogue import MIGRATIONS, SCHEMA_VERSION, SqliteRepository
 
 ENTRY = CatalogEntry(
     publisher_name="Marvel",
@@ -26,8 +27,50 @@ UNRECOGNIZED = IdentifyResult("p3", "c.jpg", Bucket.UNRECOGNIZED)
 
 
 @pytest.fixture
-def repo(tmp_path):
+def repo(tmp_path: Path) -> SqliteRepository:
     return SqliteRepository(tmp_path / "comicload.sqlite")
+
+
+def _user_version(db_path: Path) -> int:
+    """Helper to inspect database user_version pragma."""
+    conn = sqlite3.connect(db_path)
+    try:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        conn.close()
+
+
+# The schema exactly as unversioned comicload (before PRAGMA user_version) wrote it.
+_V0_SCHEMA = (
+    "CREATE TABLE scan_result ("
+    "photo_id TEXT PRIMARY KEY, filename TEXT NOT NULL, bucket TEXT NOT NULL,"
+    "entry TEXT, candidates TEXT NOT NULL DEFAULT '[]');"
+)
+
+
+def catalogue_at_version(db_path: Path, version: int, rows: list[tuple[str, str, str]]) -> Path:
+    """Build a catalogue database exactly as schema version N of comicload wrote it.
+
+    One builder for every era: version 0 is the pre-versioned schema, any later
+    version applies the real migration scripts up to N and stamps it. Tests describe
+    the era and the rows; the SQL lives here, once.
+    """
+    conn = sqlite3.connect(db_path)
+    if version == 0:
+        conn.executescript(_V0_SCHEMA)
+    else:
+        for script in MIGRATIONS[:version]:
+            conn.executescript(script)
+        conn.execute(f"PRAGMA user_version = {version}")
+    for photo_id, filename, bucket in rows:
+        conn.execute(
+            "INSERT INTO scan_result (photo_id, filename, bucket, entry, candidates)"
+            " VALUES (?, ?, ?, NULL, '[]')",
+            (photo_id, filename, bucket),
+        )
+    conn.commit()
+    conn.close()
+    return db_path
 
 
 def test_creates_database_on_first_save(tmp_path):
@@ -81,14 +124,9 @@ def test_saving_nothing_is_harmless(repo):
 
 
 def test_new_database_is_stamped_with_current_schema_version(tmp_path):
-    import sqlite3
-
-    from comicload.infra.storage.catalogue import SCHEMA_VERSION
-
     db = tmp_path / "comicload.sqlite"
     SqliteRepository(db).save([])
-    version = sqlite3.connect(db).execute("PRAGMA user_version").fetchone()[0]
-    assert version == SCHEMA_VERSION
+    assert _user_version(db) == SCHEMA_VERSION
 
 
 def test_existing_data_survives_reopening(tmp_path):
@@ -100,27 +138,12 @@ def test_existing_data_survives_reopening(tmp_path):
 
 def test_migration_from_version_zero_is_applied(tmp_path):
     """A pre-versioned database is migrated up, not wiped."""
-    import sqlite3
-
-    from comicload.infra.storage.catalogue import SCHEMA_VERSION
-
-    db = tmp_path / "legacy.sqlite"
-    conn = sqlite3.connect(db)
-    conn.executescript(
-        "CREATE TABLE scan_result ("
-        "photo_id TEXT PRIMARY KEY, filename TEXT NOT NULL, bucket TEXT NOT NULL,"
-        "entry TEXT, candidates TEXT NOT NULL DEFAULT '[]');"
-    )
-    conn.execute("INSERT INTO scan_result VALUES ('p9', 'old.jpg', 'unrecognized', NULL, '[]')")
-    conn.commit()
-    conn.close()
-
+    db = catalogue_at_version(tmp_path / "legacy.sqlite", 0, [("p9", "old.jpg", "unrecognized")])
     repo = SqliteRepository(db)
     pending = repo.pending_review()
 
     assert [r.photo_id for r in pending] == ["p9"], "existing row was lost during migration"
-    version = sqlite3.connect(db).execute("PRAGMA user_version").fetchone()[0]
-    assert version == SCHEMA_VERSION
+    assert _user_version(db) == SCHEMA_VERSION
 
 
 # --- reads must never conjure a database out of a mistyped path ---------------
@@ -167,10 +190,8 @@ def test_a_failing_migration_leaves_the_database_unchanged_and_re_runnable(tmp_p
     with pytest.raises(sqlite3.OperationalError):
         SqliteRepository(db).pending_review()
 
+    assert _user_version(db) == original_version, "stamp moved despite failure"
     conn = sqlite3.connect(db)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == original_version, (
-        "stamp moved despite failure"
-    )
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "extra" not in tables, "a partial schema change survived the failed migration"
     conn.close()
@@ -219,21 +240,7 @@ def test_signal_failures_survive_persistence(tmp_path):
 
 def test_a_version_one_catalogue_is_migrated_and_keeps_its_rows(tmp_path):
     """The v2 migration adds the signal_failures column without touching data."""
-    import sqlite3
-
-    from comicload.infra.storage.catalogue import MIGRATIONS
-
-    db = tmp_path / "v1.sqlite"
-    conn = sqlite3.connect(db)
-    conn.executescript(MIGRATIONS[0])
-    conn.execute(
-        "INSERT INTO scan_result (photo_id, filename, bucket, entry, candidates)"
-        " VALUES ('p9', 'old.jpg', 'unrecognized', NULL, '[]')"
-    )
-    conn.execute("PRAGMA user_version = 1")
-    conn.commit()
-    conn.close()
-
+    db = catalogue_at_version(tmp_path / "v1.sqlite", 1, [("p9", "old.jpg", "unrecognized")])
     repo = SqliteRepository(db)
     pending = repo.pending_review()
     assert [r.photo_id for r in pending] == ["p9"]

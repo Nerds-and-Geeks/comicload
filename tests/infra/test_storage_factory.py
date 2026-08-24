@@ -1,8 +1,9 @@
 from pathlib import Path
 
-from comicload.core.models import Bucket, CatalogEntry, IdentifyResult
-from comicload.infra.config import Config
+from comicload.core.models import Bucket, Candidate, CatalogEntry, IdentifyResult, Scope
+from comicload.infra.config import Config, load_config, save_config
 from comicload.infra.storage.factory import open_repository, open_resolver
+from comicload.infra.storage.gcd_loader import load_dump
 
 ENTRY = CatalogEntry("Marvel", "The Punisher", "The Punisher #12")
 
@@ -16,13 +17,11 @@ def test_sqlite_repository_is_reachable_by_dsn(tmp_path):
 
 
 def test_sqlite_resolver_is_reachable_by_dsn(tmp_path):
-    from comicload.infra.storage.gcd_loader import load_dump
 
     db = tmp_path / "gcd.sqlite"
     load_dump(Path("tests/fixtures/gcd_sample.sql"), db)
 
     resolver = open_resolver(f"sqlite://{db}")
-    from comicload.core.models import Candidate, Scope
 
     issues = resolver.resolve(
         Candidate(signal="barcode", confidence=1.0, barcode="75960608457000111"), Scope()
@@ -43,7 +42,6 @@ def test_configured_dsn_overrides_the_default():
 
 
 def test_a_non_file_dsn_survives_config_roundtrip(tmp_path):
-    from comicload.infra.config import load_config, save_config
 
     config = Config()
     config.storage.catalogue = "postgresql://user@host/comicload"

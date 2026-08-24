@@ -6,6 +6,7 @@ from datetime import date
 
 import pytest
 
+from comicload.core.errors import CatalogError
 from comicload.core.models import Candidate, Scope
 from comicload.infra.storage import gcd_repo
 from comicload.infra.storage.gcd_loader import SCHEMA
@@ -197,7 +198,6 @@ def test_the_resolver_is_a_context_manager(one_issue, opened):
 
 def test_a_missing_database_is_reported_when_it_is_used(tmp_path):
     """Constructing a resolver must not touch the disk; resolving must say what is wrong."""
-    from comicload.core.errors import CatalogError
 
     resolver = SqliteIssueResolver(tmp_path / "absent.sqlite")
 

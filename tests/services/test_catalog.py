@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from comicload.core.errors import CatalogError
 from comicload.core.models import Candidate, Scope
 from comicload.infra.storage.gcd_loader import load_dump
 from comicload.infra.storage.gcd_repo import SqliteIssueResolver
@@ -50,7 +51,6 @@ def test_candidate_with_no_usable_fields_returns_nothing(resolver):
 
 
 def test_missing_database_raises(tmp_path):
-    from comicload.core.errors import CatalogError
 
     resolver = SqliteIssueResolver(tmp_path / "absent.sqlite")
     with pytest.raises(CatalogError, match="catalog sync"):

@@ -1,7 +1,12 @@
+from pathlib import Path
+
 import pytest
 
 from comicload.core.errors import ComicloadError
 from comicload.core.models import Bucket, Candidate, Issue, Photo, Scope
+from comicload.infra.signals.barcode import BarcodeSignal
+from comicload.infra.storage.gcd_loader import load_dump
+from comicload.infra.storage.gcd_repo import SqliteIssueResolver
 from comicload.services.identify import IdentifyService
 
 
@@ -191,7 +196,6 @@ def test_a_deliberate_comicload_error_stops_the_run():
 
 def test_an_exact_bare_upc_match_reaches_confident():
     """Comics without the 5-digit addon could never be auto-identified before."""
-    from comicload.infra.signals.barcode import BarcodeSignal
 
     signal = BarcodeSignal(decoder=lambda data: [("759606084570", None)])
     service = IdentifyService(signals=[signal], resolver=StubResolver({"759606084570": [ISSUE]}))
@@ -204,7 +208,6 @@ def test_an_exact_bare_upc_match_reaches_confident():
 
 def test_resolution_falls_back_from_the_concatenated_barcode_to_the_bare_upc():
     """The catalogue row has no supplement recorded; the scan must still match it."""
-    from comicload.infra.signals.barcode import BarcodeSignal
 
     signal = BarcodeSignal(decoder=lambda data: [("759606084570", "00111")])
     service = IdentifyService(signals=[signal], resolver=StubResolver({"759606084570": [ISSUE]}))
@@ -222,10 +225,6 @@ def test_resolution_falls_back_from_the_concatenated_barcode_to_the_bare_upc():
 def test_a_candidates_printing_reaches_the_full_title(tmp_path):
     """End to end over the real catalogue: the printing is not in the database, so it
     can only reach the title by IdentifyService putting it there."""
-    from pathlib import Path
-
-    from comicload.infra.storage.gcd_loader import load_dump
-    from comicload.infra.storage.gcd_repo import SqliteIssueResolver
 
     db = tmp_path / "gcd.sqlite"
     load_dump(Path("tests/fixtures/gcd_sample.sql"), db)

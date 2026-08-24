@@ -2,6 +2,7 @@ import pytest
 
 from comicload.core.errors import ComicloadError
 from comicload.core.models import Photo, Scope
+from comicload.core.registry import available_signals
 from comicload.infra.signals.barcode import BarcodeSignal, decode_supplement
 
 
@@ -80,7 +81,6 @@ def test_signal_never_raises_on_decoder_failure():
 
 
 def test_signal_is_registered():
-    from comicload.core.registry import available_signals
 
     assert "barcode" in available_signals()
 
