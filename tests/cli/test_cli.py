@@ -4,7 +4,7 @@ from typer.testing import CliRunner
 
 import comicload.cli.app as app_module
 from comicload.cli.app import app
-from comicload.config import load_config
+from comicload.config import load_config, save_config
 from comicload.errors import ComicloadError
 from comicload.export.csv import COLUMNS, read_csv
 from comicload.models import Candidate
@@ -355,3 +355,52 @@ def test_scan_wires_a_real_decoder_into_the_barcode_signal(tmp_path, monkeypatch
 
     assert result.exit_code == 0, result.output
     assert seen.get("called"), "scan ran without the wired decoder ever being used"
+
+
+def test_scan_builds_the_catalog_itself_when_missing(tmp_path, monkeypatch):
+    """scan depends on a built comic database; it should build one, not tell the
+    person to go run a different command and try again."""
+    config = load_config(tmp_path / "missing.toml")
+    config.storage.last_dump = str(FIXTURE)
+    config.storage.catalog_db = str(tmp_path / "gcd.sqlite")
+    config.storage.catalogue_db = str(tmp_path / "comicload.sqlite")
+    monkeypatch.setattr(app_module, "load_config", lambda *args, **kwargs: config)
+
+    photos = tmp_path / "photos"
+    photos.mkdir()
+
+    result = runner.invoke(app, ["scan", str(photos), "--out", str(tmp_path / "out.csv")])
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "gcd.sqlite").exists(), "scan never built the database it needed"
+    assert "building one" in result.output.lower()
+
+
+def test_scan_fails_clearly_when_no_dump_is_known(tmp_path, monkeypatch):
+    """No database and nothing remembered — scan cannot invent a dump path, so it
+    must say exactly what to run, once, instead of a vague failure."""
+    config = load_config(tmp_path / "missing.toml")
+    config.storage.catalog_db = str(tmp_path / "gcd.sqlite")
+    monkeypatch.setattr(app_module, "load_config", lambda *args, **kwargs: config)
+
+    photos = tmp_path / "photos"
+    photos.mkdir()
+
+    result = runner.invoke(app, ["scan", str(photos), "--out", str(tmp_path / "out.csv")])
+
+    assert result.exit_code != 0
+    assert "comicload catalog sync" in result.output
+    assert not (tmp_path / "gcd.sqlite").exists()
+
+
+def test_catalog_sync_remembers_the_dump_for_scan_to_reuse(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setattr(app_module, "load_config", lambda *args, **kwargs: load_config(config_path))
+    monkeypatch.setattr(
+        app_module, "save_config", lambda cfg, *a, **kw: save_config(cfg, config_path)
+    )
+
+    result = runner.invoke(app, ["catalog", "sync", str(FIXTURE)])
+
+    assert result.exit_code == 0, result.output
+    assert load_config(config_path).storage.last_dump == str(FIXTURE)

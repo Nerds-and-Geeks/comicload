@@ -16,6 +16,10 @@ from comicload.errors import ConfigError
 class StorageConfig(BaseModel):
     catalog_db: str = ""  # Path to local GCD mirror database
     catalogue_db: str = ""  # Path to local user review/quarantine database
+    last_dump: str = ""  # Path of the GCD dump last used by `catalog sync`.
+    # `scan` needs a working catalog_db but cannot invent a dump to build one from —
+    # this is how it finds the one the user already pointed at, without asking them
+    # to remember and re-type `catalog sync <path>` before every scan.
 
 
 class SignalsConfig(BaseModel):

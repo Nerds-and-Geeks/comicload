@@ -83,6 +83,22 @@ def scan(
     catalog_path = db or config.gcd_db_path()
     catalogue_path = catalogue_db or config.catalogue_db_path()
 
+    if not catalog_path.exists() or catalog_path.stat().st_size == 0:
+        # scan depends on a built comic database; it builds one instead of
+        # telling the person to go run a different command first.
+        last_dump = Path(config.storage.last_dump) if config.storage.last_dump else None
+        if last_dump is None or not last_dump.exists():
+            raise _fail(
+                "There is no comic database yet, and scan does not know where your "
+                "Grand Comics Database dump is.\n"
+                "Run this once: comicload catalog sync <path-to-your-gcd-dump.sql>"
+            )
+        console.print(
+            f"[dim]No comic database yet — building one from {escape(str(last_dump))}...[/dim]"
+        )
+        _sync_catalog(last_dump, catalog_path)
+        console.print()
+
     try:
         source = LocalFolderPhotoSource(folder)
         source.count()
@@ -273,14 +289,30 @@ def catalog_sync(
     db: Annotated[Path | None, typer.Option("--db", help="Where to build the database.")] = None,
 ) -> None:
     """Build the local comic metadata database from a Grand Comics Database dump."""
+    config = load_config()
+    target = db or config.gcd_db_path()
+    counts = _sync_catalog(dump, target)
+
+    if not db:
+        # Remembered so `scan` can rebuild this database on its own later — the
+        # user should not have to re-run this command before every scan.
+        config.storage.last_dump = str(dump)
+        save_config(config)
+
+    for table, count in sorted(counts.items()):
+        console.print(f"  {table}: [bold]{count:,}[/bold] rows")
+    console.print(f"[green]Database ready:[/green] {escape(str(target))}")
+
+
+def _sync_catalog(dump: Path, target: Path) -> dict[str, int]:
+    """Build the metadata database at `target` from `dump`, with a progress bar."""
     progress = RichProgressReporter()
     try:
-        target = db or load_config().gcd_db_path()
         # total = dump size in bytes; the loader reports bytes consumed per statement,
         # so the bar crawls through the whole file instead of sitting at a fake 100%.
         progress.start(max(dump.stat().st_size, 1), "Reading the dump")
         try:
-            counts = load_dump(
+            return load_dump(
                 dump,
                 target,
                 on_progress=lambda consumed: progress.advance(consumed, "building your database"),
@@ -289,10 +321,6 @@ def catalog_sync(
             progress.finish()
     except ComicloadError as exc:
         raise _fail(str(exc)) from exc
-
-    for table, count in sorted(counts.items()):
-        console.print(f"  {table}: [bold]{count:,}[/bold] rows")
-    console.print(f"[green]Database ready:[/green] {escape(str(target))}")
 
 
 @config_app.command("show")
