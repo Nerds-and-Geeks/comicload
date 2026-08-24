@@ -7,13 +7,18 @@ from pathlib import Path
 from comicload.core.errors import CatalogError
 from comicload.core.models import Candidate, Issue, Scope
 from comicload.core.storage_registry import Dsn, register_resolver
+from comicload.infra.storage.query import Query
 
-_BASE_QUERY = """
+_SELECT = """
 SELECT i.id, p.name, s.name, i.number, i.on_sale_date
 FROM issue i
 JOIN series s ON s.id = i.series_id
 JOIN publisher p ON p.id = s.publisher_id
 """
+
+# One photo is one comic. More matches than this is not a longer list worth reading,
+# it is a query that failed to narrow anything down.
+_MAX_MATCHES = 25
 
 
 def _parse_date(raw: str | None) -> date | None:
@@ -47,32 +52,27 @@ class SqliteIssueResolver:
         return sqlite3.connect(self._db_path)
 
     def resolve(self, candidate: Candidate, scope: Scope) -> list[Issue]:
-        clauses: list[str] = []
-        params: list[str] = []
+        query = Query(select=_SELECT, order_by="i.id", limit=_MAX_MATCHES)
 
         if candidate.barcode:
-            clauses.append("i.barcode = ?")
-            params.append(candidate.barcode)
+            query = query.where("i.barcode = ?", candidate.barcode)
         else:
             if candidate.series:
-                clauses.append("s.name = ? COLLATE NOCASE")
-                params.append(candidate.series)
+                query = query.where("s.name = ? COLLATE NOCASE", candidate.series)
             if candidate.issue_number:
-                clauses.append("i.number = ?")
-                params.append(candidate.issue_number)
+                query = query.where("i.number = ?", candidate.issue_number)
 
-        if not clauses:
+        if not query.predicates:
             return []
 
         if scope.publisher:
-            clauses.append("p.name = ? COLLATE NOCASE")
-            params.append(scope.publisher)
+            query = query.where("p.name = ? COLLATE NOCASE", scope.publisher)
 
-        query = f"{_BASE_QUERY} WHERE {' AND '.join(clauses)} ORDER BY i.id LIMIT 25"
+        sql, params = query.build()
 
         conn = self._connect()
         try:
-            rows = conn.execute(query, params).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         finally:
             conn.close()
 
