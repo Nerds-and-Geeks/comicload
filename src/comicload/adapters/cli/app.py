@@ -25,6 +25,11 @@ from comicload.infra.storage.gcd_loader import load_dump
 from comicload.services.export import ExportService
 from comicload.services.identify import IdentifyService
 
+try:
+    from comicload.infra.sinks.locg_sink import LocgPlaywrightSink as _LocgPlaywrightSink
+except ImportError:
+    _LocgPlaywrightSink = None
+
 app = typer.Typer(
     help="Photograph your comics, identify them, and build your League of Comic Geeks collection.",
     no_args_is_help=True,
@@ -185,17 +190,15 @@ def import_csv(
         )
         return
 
-    try:
-        from comicload.infra.sinks.locg_sink import LocgPlaywrightSink
-    except ImportError:
+    if _LocgPlaywrightSink is None:
         console.print(
             "[red]Uploading needs the optional browser extra.[/red]\n"
             r"Install it with: [bold]pip install 'comicload\[locg]'[/bold]"
         )
-        raise typer.Exit(code=1) from None
+        raise typer.Exit(code=1)
 
     config = load_config()
-    result = LocgPlaywrightSink(config.locg_state_path()).push(entries)
+    result = _LocgPlaywrightSink(config.locg_state_path()).push(entries)
     console.print(import_panel(result))
 
 
