@@ -2,8 +2,8 @@ import csv
 from datetime import date
 from pathlib import Path
 
-from comicload.domain.models import CatalogEntry
 from comicload.export.csv import COLUMNS, CsvSink, read_csv, validate_csv
+from comicload.models import CatalogEntry
 from comicload.signals.registry import available_sinks
 
 FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "locg_export_header.csv"

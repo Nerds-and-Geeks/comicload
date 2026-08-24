@@ -1,6 +1,6 @@
 import pytest
 
-from comicload.domain.models import Candidate, Photo, Scope
+from comicload.models import Candidate, Photo, Scope
 from comicload.signals.registry import (
     available_signals,
     get_signal,

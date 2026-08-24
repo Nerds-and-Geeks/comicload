@@ -4,9 +4,9 @@ import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 
-from comicload.domain.errors import ComicloadError
-from comicload.domain.models import Photo
+from comicload.errors import ComicloadError
 from comicload.ingestion.pdf import pages_png
+from comicload.models import Photo
 
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".tif", ".tiff", ".pdf"}
 

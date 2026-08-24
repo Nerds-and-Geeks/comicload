@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from comicload.domain.errors import ComicloadError
-from comicload.domain.models import Candidate, Photo, Scope
+from comicload.errors import ComicloadError
+from comicload.models import Candidate, Photo, Scope
 from comicload.signals.registry import register_signal
 
 DecodedBarcode = tuple[str, str | None]

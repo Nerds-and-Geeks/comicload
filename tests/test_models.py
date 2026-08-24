@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from comicload.domain.models import (
+from comicload.models import (
     Bucket,
     Candidate,
     CatalogEntry,

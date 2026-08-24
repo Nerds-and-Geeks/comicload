@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar, cast
 
-from comicload.domain.ports import Signal, Sink
+from comicload.ports import Signal, Sink
 
 signal_registry: dict[str, type] = {}
 sink_registry: dict[str, type] = {}

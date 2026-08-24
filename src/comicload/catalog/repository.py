@@ -5,8 +5,8 @@ from datetime import date
 from pathlib import Path
 from types import TracebackType
 
-from comicload.domain.errors import CatalogError
-from comicload.domain.models import Candidate, Issue, Scope
+from comicload.errors import CatalogError
+from comicload.models import Candidate, Issue, Scope
 
 _SELECT = """
 SELECT i.id AS issue_id,

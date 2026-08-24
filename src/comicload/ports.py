@@ -4,7 +4,7 @@ from collections.abc import Iterator, Sequence
 from types import TracebackType
 from typing import Protocol, runtime_checkable
 
-from comicload.domain.models import (
+from comicload.models import (
     Candidate,
     CatalogEntry,
     IdentifyResult,

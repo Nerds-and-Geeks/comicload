@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pymupdf
 
-from comicload.domain.errors import ComicloadError
+from comicload.errors import ComicloadError
 
 # 6x scale ≈ 432 DPI. The main UPC reads at far less, but the EAN-5 supplement —
 # which distinguishes issues sharing a UPC — needs the extra resolution on real

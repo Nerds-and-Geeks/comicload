@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import platform
 
-from comicload.domain.errors import ComicloadError
+from comicload.errors import ComicloadError
 from comicload.signals.barcode import MISSING_ZBAR, Decoder
 
 

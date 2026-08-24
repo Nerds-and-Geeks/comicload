@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from comicload.catalog.loader import load_dump
-from comicload.domain.errors import CatalogError
+from comicload.errors import CatalogError
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 FIXTURE = FIXTURES / "gcd_sample.sql"

@@ -1,6 +1,6 @@
 from datetime import date
 
-from comicload.domain.models import Bucket, Candidate, IdentifyResult, Issue
+from comicload.models import Bucket, Candidate, IdentifyResult, Issue
 from comicload.quarantine.service import ConfirmService, parse_query
 
 ISSUE = Issue(

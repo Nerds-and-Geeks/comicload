@@ -3,9 +3,9 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 
-from comicload.domain.errors import ComicloadError
-from comicload.domain.models import Bucket, Candidate, IdentifyResult, Issue, Photo, Scope
-from comicload.domain.ports import (
+from comicload.errors import ComicloadError
+from comicload.models import Bucket, Candidate, IdentifyResult, Issue, Photo, Scope
+from comicload.ports import (
     IssueResolver,
     NullProgressReporter,
     PhotoSource,

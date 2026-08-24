@@ -11,8 +11,8 @@ from __future__ import annotations
 import dataclasses
 import re
 
-from comicload.domain.models import Bucket, Candidate, IdentifyResult, Issue, Scope
-from comicload.domain.ports import IssueResolver, Repository
+from comicload.models import Bucket, Candidate, IdentifyResult, Issue, Scope
+from comicload.ports import IssueResolver, Repository
 
 # "Superman #35", "superman 35 2014", "Alex + Ada #2" — series, issue, optional year
 _QUERY = re.compile(

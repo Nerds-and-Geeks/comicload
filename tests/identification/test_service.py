@@ -4,9 +4,9 @@ import pytest
 
 from comicload.catalog.loader import load_dump
 from comicload.catalog.repository import SqliteIssueResolver
-from comicload.domain.errors import ComicloadError
-from comicload.domain.models import Bucket, Candidate, Issue, Photo, Scope
+from comicload.errors import ComicloadError
 from comicload.identification.service import IdentifyService
+from comicload.models import Bucket, Candidate, Issue, Photo, Scope
 from comicload.signals.barcode import BarcodeSignal
 
 

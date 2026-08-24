@@ -5,9 +5,9 @@ from typer.testing import CliRunner
 import comicload.cli.app as app_module
 from comicload.cli.app import app
 from comicload.config import load_config
-from comicload.domain.errors import ComicloadError
-from comicload.domain.models import Candidate
+from comicload.errors import ComicloadError
 from comicload.export.csv import COLUMNS, read_csv
+from comicload.models import Candidate
 from comicload.quarantine.repository import SqliteRepository
 
 runner = CliRunner()

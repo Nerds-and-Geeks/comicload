@@ -11,7 +11,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from comicload.domain.models import Bucket, Candidate, IdentifyResult, ImportResult
+from comicload.models import Bucket, Candidate, IdentifyResult, ImportResult
 
 console = Console()
 

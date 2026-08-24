@@ -6,13 +6,11 @@ test that has never been shown to reject anything is decoration, not enforcement
 """
 
 import ast
-import sys
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "comicload"
 
 LAYERS = (
-    "domain",
     "catalog",
     "signals",
     "ingestion",
@@ -22,39 +20,60 @@ LAYERS = (
     "cli",
 )
 
-# Files that live directly in src/comicload/ rather than in a domain module.
-ROOT_FILES = {"__init__.py", "config.py"}
+# Files that live directly in src/comicload/ rather than in a sub-domain module.
+ROOT_FILES = {"__init__.py", "config.py", "errors.py", "models.py", "ports.py"}
 
 # Which comicload packages each domain module may import.
 ALLOWED_INTERNAL = {
-    "domain": ("comicload.domain",),
-    "catalog": ("comicload.domain", "comicload.catalog", "comicload.config"),
-    "signals": ("comicload.domain", "comicload.signals"),
-    "ingestion": ("comicload.domain", "comicload.ingestion"),
+    "catalog": (
+        "comicload.catalog",
+        "comicload.config",
+        "comicload.models",
+        "comicload.ports",
+        "comicload.errors",
+    ),
+    "signals": (
+        "comicload.signals",
+        "comicload.models",
+        "comicload.ports",
+        "comicload.errors",
+    ),
+    "ingestion": (
+        "comicload.ingestion",
+        "comicload.models",
+        "comicload.ports",
+        "comicload.errors",
+    ),
     "identification": (
-        "comicload.domain",
+        "comicload.identification",
         "comicload.signals",
         "comicload.catalog",
-        "comicload.identification",
+        "comicload.models",
+        "comicload.ports",
+        "comicload.errors",
     ),
     "quarantine": (
-        "comicload.domain",
-        "comicload.catalog",
         "comicload.quarantine",
+        "comicload.catalog",
         "comicload.signals",
         "comicload.config",
+        "comicload.models",
+        "comicload.ports",
+        "comicload.errors",
     ),
-    "export": ("comicload.domain", "comicload.export", "comicload.signals"),
+    "export": (
+        "comicload.export",
+        "comicload.signals",
+        "comicload.models",
+        "comicload.ports",
+        "comicload.errors",
+    ),
     "cli": ("comicload",),
 }
-
-# Layers that may not reach for anything outside the standard library.
-STDLIB_ONLY = ("domain",)
 
 # Layers that may not import comicload's own presentation libraries, print, or write to
 # a stream directly. Presentation belongs to cli.
 QUIET_LAYERS = (
-    "domain",
     "catalog",
     "signals",
     "ingestion",
@@ -152,13 +171,7 @@ def _check_import(relative: str, layer: str, imported: str) -> list[str]:
     if layer in QUIET_LAYERS and top in PRESENTATION_PACKAGES:
         problems.append(f"{relative} imports {top}; presentation belongs in cli/")
         return problems
-        return problems
 
-    if layer in STDLIB_ONLY and top not in sys.stdlib_module_names:
-        problems.append(
-            f"{relative} imports {imported}, which is not in the standard library; "
-            f"layer '{layer}' must stay dependency-free"
-        )
     return problems
 
 

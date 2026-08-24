@@ -10,7 +10,7 @@ import tomli_w
 from platformdirs import user_config_path, user_data_path
 from pydantic import BaseModel, Field, ValidationError
 
-from comicload.domain.errors import ConfigError
+from comicload.errors import ConfigError
 
 
 class StorageConfig(BaseModel):

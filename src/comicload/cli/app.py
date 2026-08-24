@@ -20,11 +20,11 @@ from comicload.cli.render import (
 )
 from comicload.cli.wiring import get_default_barcode_decoder
 from comicload.config import Config, load_config, save_config
-from comicload.domain.errors import ComicloadError
-from comicload.domain.models import Bucket, IdentifyResult
+from comicload.errors import ComicloadError
 from comicload.export.csv import CsvSink, read_csv, validate_csv
 from comicload.identification.service import IdentifyService
 from comicload.ingestion.photos import LocalFolderPhotoSource
+from comicload.models import Bucket, IdentifyResult
 from comicload.quarantine.repository import SqliteRepository
 from comicload.quarantine.service import ConfirmService
 from comicload.signals.registry import get_signal

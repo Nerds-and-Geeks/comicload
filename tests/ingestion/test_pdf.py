@@ -5,7 +5,7 @@ a PDF is."""
 import pymupdf
 import pytest
 
-from comicload.domain.errors import ComicloadError
+from comicload.errors import ComicloadError
 from comicload.ingestion.pdf import pages_png
 from comicload.ingestion.photos import LocalFolderPhotoSource
 

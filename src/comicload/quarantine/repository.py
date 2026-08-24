@@ -17,8 +17,8 @@ from typing import Any
 
 from PIL import Image
 
-from comicload.domain.errors import CatalogError
-from comicload.domain.models import Bucket, Candidate, CatalogEntry, IdentifyResult
+from comicload.errors import CatalogError
+from comicload.models import Bucket, Candidate, CatalogEntry, IdentifyResult
 
 SCHEMA_VERSION = 3
 

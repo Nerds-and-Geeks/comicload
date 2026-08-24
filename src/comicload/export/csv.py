@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
-from comicload.domain.models import CatalogEntry, ImportResult
+from comicload.models import CatalogEntry, ImportResult
 from comicload.signals.registry import register_sink
 
 # Exact column order from a real League of Comic Geeks export.

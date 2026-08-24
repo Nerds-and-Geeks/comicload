@@ -9,8 +9,8 @@ import pytest
 from comicload.catalog import repository as gcd_repo
 from comicload.catalog.loader import SCHEMA
 from comicload.catalog.repository import SqliteIssueResolver
-from comicload.domain.errors import CatalogError
-from comicload.domain.models import Candidate, Scope
+from comicload.errors import CatalogError
+from comicload.models import Candidate, Scope
 
 
 def build_db(path, issues, publisher="DC", series="Detective Comics"):

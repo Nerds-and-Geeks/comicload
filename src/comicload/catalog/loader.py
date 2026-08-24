@@ -34,7 +34,7 @@ import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-from comicload.domain.errors import CatalogError
+from comicload.errors import CatalogError
 
 TABLES_SCHEMA = """
 DROP TABLE IF EXISTS issue;

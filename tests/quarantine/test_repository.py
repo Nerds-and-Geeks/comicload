@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from comicload.domain.errors import CatalogError
-from comicload.domain.models import Bucket, Candidate, CatalogEntry, IdentifyResult
+from comicload.errors import CatalogError
+from comicload.models import Bucket, Candidate, CatalogEntry, IdentifyResult
 from comicload.quarantine import repository as catalogue
 from comicload.quarantine.repository import MIGRATIONS, SCHEMA_VERSION, SqliteRepository
 

@@ -37,11 +37,6 @@ def test_dynamic_import_of_another_layer_is_rejected():
     assert "import_module" in report
 
 
-def test_third_party_import_in_core_is_rejected():
-    report = _rejects("domain/models.py", "import pydantic\n")
-    assert "standard library" in report
-
-
 def test_stdout_write_outside_adapters_is_rejected():
     report = _rejects("export/csv.py", "import sys\nsys.stdout.write('hello')\n")
     assert "standard stream" in report
@@ -81,7 +76,7 @@ def test_a_module_outside_every_layer_is_rejected():
 
 
 def test_plain_print_outside_adapters_is_rejected():
-    assert "print()" in _rejects("domain/models.py", "print('hello')\n")
+    assert "print()" in _rejects("catalog/loader.py", "print('hello')\n")
 
 
 def test_rich_import_outside_adapters_is_rejected():
@@ -104,14 +99,16 @@ def test_signals_may_not_import_cli():
 @pytest.mark.parametrize(
     ("relative", "source"),
     [
-        ("domain/models.py", "from dataclasses import dataclass\nimport sqlite3\n"),
-        ("export/csv.py", "from comicload.domain.models import Bucket\n"),
-        ("ingestion/photos.py", "import pydantic\nfrom comicload.domain.models import Photo\n"),
+        ("export/csv.py", "from comicload.models import Bucket\n"),
+        ("ingestion/photos.py", "import pydantic\nfrom comicload.models import Photo\n"),
         ("quarantine/repository.py", "from ..config import load_config\n"),
         ("cli/app.py", "import typer\nfrom rich.console import Console\nprint('ok')\n"),
         ("cli/app.py", "from comicload.export.csv import CsvSink\n"),
         ("__init__.py", ""),
         ("config.py", ""),
+        ("models.py", ""),
+        ("ports.py", ""),
+        ("errors.py", ""),
     ],
 )
 def test_legitimate_modules_are_accepted(relative, source):

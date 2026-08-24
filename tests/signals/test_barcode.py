@@ -1,7 +1,7 @@
 import pytest
 
-from comicload.domain.errors import ComicloadError
-from comicload.domain.models import Photo, Scope
+from comicload.errors import ComicloadError
+from comicload.models import Photo, Scope
 from comicload.signals.barcode import BarcodeSignal, decode_supplement
 from comicload.signals.registry import available_signals
 
