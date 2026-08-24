@@ -20,6 +20,7 @@ class LocgConfig(BaseModel):
 
 class CatalogConfig(BaseModel):
     gcd_db: str = ""
+    catalogue_db: str = ""
 
 
 class ScanConfig(BaseModel):
@@ -59,6 +60,11 @@ class Config(BaseModel):
         if self.catalog.gcd_db:
             return Path(self.catalog.gcd_db).expanduser()
         return user_data_path("comicload") / "gcd.sqlite"
+
+    def catalogue_db_path(self) -> Path:
+        if self.catalog.catalogue_db:
+            return Path(self.catalog.catalogue_db).expanduser()
+        return user_data_path("comicload") / "comicload.sqlite"
 
     def locg_state_path(self) -> Path:
         if self.locg.state_file:
