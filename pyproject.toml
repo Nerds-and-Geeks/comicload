@@ -17,6 +17,7 @@ dependencies = [
     "pillow>=10.3",
     "pyzbar>=0.1.9",
     "tomli-w>=1.0",
+    "pymupdf>=1.24",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,10 @@ packages = ["src/comicload"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:builtin type swigvarlink:DeprecationWarning",
+    "ignore:builtin type Swig:DeprecationWarning",
+]
 pythonpath = ["src"]
 
 [tool.ruff]
