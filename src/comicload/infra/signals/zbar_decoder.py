@@ -21,6 +21,11 @@ def setup_environment() -> None:
             )
 
 
+setup_environment()
+
+from pyzbar import pyzbar  # noqa: E402
+
+
 def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
     """Decode UPC/EAN barcodes from cover photo bytes using pyzbar.
 
@@ -28,9 +33,6 @@ def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
     comics with sleeve glare), evaluates regional corner crops with 3x upscaling
     and histogram equalization.
     """
-    setup_environment()
-    from pyzbar import pyzbar
-
     raw_image = Image.open(io.BytesIO(image_bytes))
     image = ImageOps.exif_transpose(raw_image)
 

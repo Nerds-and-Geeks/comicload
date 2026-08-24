@@ -25,11 +25,17 @@ def setup_environment() -> None:
             )
 
 
+setup_environment()
+
+_decoder_fn: Decoder | None
+try:
+    from comicload.infra.signals.zbar_decoder import pyzbar_decoder as _decoder_fn
+except (ImportError, OSError):
+    _decoder_fn = None
+
+
 def get_default_barcode_decoder() -> Decoder:
-    """Load the zbar decoder, or say exactly what to install when the library is absent."""
-    setup_environment()
-    try:
-        from comicload.infra.signals.zbar_decoder import pyzbar_decoder
-    except (ImportError, OSError) as exc:
-        raise ComicloadError(f"{MISSING_ZBAR}\n\n({exc})") from exc
-    return pyzbar_decoder
+    """Obtain the default zbar barcode decoder, raising a friendly error if zbar is missing."""
+    if _decoder_fn is None:
+        raise ComicloadError(MISSING_ZBAR)
+    return _decoder_fn
