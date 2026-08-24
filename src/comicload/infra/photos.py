@@ -6,7 +6,7 @@ from pathlib import Path
 
 from comicload.core.errors import ComicloadError
 from comicload.core.models import Photo
-from comicload.infra.pdf import first_page_png
+from comicload.infra.pdf import pages_png
 
 SUPPORTED_SUFFIXES = {".jpg", ".jpeg", ".png", ".heic", ".webp", ".tif", ".tiff", ".pdf"}
 
@@ -45,15 +45,22 @@ class LocalFolderPhotoSource:
         for path in self._paths():
             raw = path.read_bytes()
             if path.suffix.lower() == ".pdf":
-                # A PDF scan is a container: page one, rendered, is the cover. An
-                # unreadable one is skipped rather than stopping the whole folder —
-                # it will show up as the difference between count() and the summary.
+                # A PDF is a container holding one cover per page. An unreadable one
+                # is skipped rather than stopping the whole folder — it shows up as
+                # the difference between count() and the summary.
                 try:
-                    data = first_page_png(raw)
+                    pages = pages_png(raw)
                 except ComicloadError:
                     continue
-            else:
-                data = raw
+                for number, data in enumerate(pages, start=1):
+                    name = path.name if len(pages) == 1 else f"{path.name} p.{number}"
+                    photo_id = hashlib.sha256(data).hexdigest()
+                    if photo_id in seen:
+                        continue
+                    seen.add(photo_id)
+                    yield Photo(id=photo_id, data=data, filename=name)
+                continue
+            data = raw
             photo_id = hashlib.sha256(data).hexdigest()
             if photo_id in seen:
                 continue
