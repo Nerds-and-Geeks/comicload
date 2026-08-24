@@ -3627,3 +3627,347 @@ Expected: all green
 git add src/comicload/infra/storage/catalogue.py src/comicload/infra/config.py tests/infra/test_catalogue.py
 git commit -m "feat(storage): persist scan results and review queue in local catalogue"
 ```
+
+---
+
+### Task 15: Storage as a registered, DSN-addressed backend
+
+**Files:**
+- Create: `src/comicload/core/storage_registry.py`, `src/comicload/infra/storage/factory.py`
+- Modify: `src/comicload/infra/config.py`, `src/comicload/infra/storage/catalogue.py`, `src/comicload/infra/storage/gcd_repo.py`, `src/comicload/adapters/cli/app.py`
+- Test: `tests/core/test_storage_registry.py`, `tests/infra/test_storage_factory.py`
+
+**Interfaces:**
+- Consumes: `Repository`, `IssueResolver` ports (Task 3)
+- Produces: `register_repository(scheme)`, `register_resolver(scheme)`, `open_repository(dsn)`, `open_resolver(dsn)`, `parse_dsn(dsn) -> Dsn`
+
+**Why.** Signals and sinks are registered — adding one edits no existing file. Storage was not:
+the CLI imported `SqliteRepository` and `SqliteIssueResolver` by name and constructed them
+directly, so swapping a backend meant editing the adapter. That violates the project's
+"configurable and extensible, not modifiable" principle at exactly the seam most likely to
+change when a web deployment arrives.
+
+**The primitive obsession, specifically.** `Config.catalogue_db_path() -> Path` types storage as
+a filesystem path. A non-file backend cannot be expressed in that type at all. A DSN replaces it:
+the scheme names the backend, the remainder is backend-specific.
+
+**No new dependency.** SQLAlchemy is deliberately deferred until a second backend actually
+exists — the rewrite cost is identical then and better informed. The port means it can land
+behind the same interface without touching callers.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/core/test_storage_registry.py`:
+```python
+import pytest
+
+from comicload.core.storage_registry import (
+    open_repository,
+    parse_dsn,
+    register_repository,
+    repository_registry,
+)
+
+
+@pytest.fixture(autouse=True)
+def clean_registry():
+    repository_registry.clear()
+    yield
+    repository_registry.clear()
+
+
+def test_parse_dsn_splits_scheme_and_target():
+    dsn = parse_dsn("sqlite:///tmp/comicload.sqlite")
+    assert dsn.scheme == "sqlite"
+    assert dsn.target == "/tmp/comicload.sqlite"
+
+
+def test_parse_dsn_handles_a_network_backend():
+    dsn = parse_dsn("postgresql://user@host:5432/comicload")
+    assert dsn.scheme == "postgresql"
+    assert dsn.target == "user@host:5432/comicload"
+
+
+def test_parse_dsn_expands_user_home():
+    dsn = parse_dsn("sqlite:///~/comicload.sqlite")
+    assert "~" not in dsn.target
+
+
+def test_parse_dsn_rejects_a_bare_path():
+    with pytest.raises(ValueError, match="sqlite:///"):
+        parse_dsn("/tmp/comicload.sqlite")
+
+
+def test_open_repository_dispatches_on_scheme():
+    @register_repository("memory")
+    class MemoryRepository:
+        def __init__(self, target: str) -> None:
+            self.target = target
+
+        @classmethod
+        def from_dsn(cls, dsn):
+            return cls(dsn.target)
+
+        def save(self, results):
+            return None
+
+        def pending_review(self):
+            return []
+
+        def confirmed_entries(self):
+            return []
+
+    repo = open_repository("memory://somewhere")
+    assert repo.target == "somewhere"
+
+
+def test_unknown_scheme_names_what_is_registered():
+    with pytest.raises(KeyError, match="postgresql"):
+        open_repository("postgresql://host/db")
+
+
+def test_duplicate_scheme_registration_is_rejected():
+    @register_repository("dupe")
+    class One:
+        @classmethod
+        def from_dsn(cls, dsn):
+            return cls()
+
+    with pytest.raises(ValueError, match="already registered"):
+
+        @register_repository("dupe")
+        class Two:
+            @classmethod
+            def from_dsn(cls, dsn):
+                return cls()
+```
+
+`tests/infra/test_storage_factory.py`:
+```python
+from pathlib import Path
+
+import pytest
+
+from comicload.core.models import Bucket, CatalogEntry, IdentifyResult
+from comicload.infra.config import Config
+from comicload.infra.storage.factory import open_repository, open_resolver
+
+ENTRY = CatalogEntry("Marvel", "The Punisher", "The Punisher #12")
+
+
+def test_sqlite_repository_is_reachable_by_dsn(tmp_path):
+    dsn = f"sqlite://{tmp_path / 'c.sqlite'}"
+    repo = open_repository(dsn)
+    repo.save([IdentifyResult("p1", "a.jpg", Bucket.CONFIDENT, entry=ENTRY)])
+
+    assert open_repository(dsn).confirmed_entries() == [ENTRY]
+
+
+def test_sqlite_resolver_is_reachable_by_dsn(tmp_path):
+    from comicload.infra.storage.gcd_loader import load_dump
+
+    db = tmp_path / "gcd.sqlite"
+    load_dump(Path("tests/fixtures/gcd_sample.sql"), db)
+
+    resolver = open_resolver(f"sqlite://{db}")
+    from comicload.core.models import Candidate, Scope
+
+    issues = resolver.resolve(
+        Candidate(signal="barcode", confidence=1.0, barcode="75960608457000111"), Scope()
+    )
+    assert issues[0].series == "The Punisher"
+
+
+def test_config_exposes_dsns_not_paths():
+    config = Config()
+    assert config.catalogue_dsn().startswith("sqlite://")
+    assert config.catalog_dsn().startswith("sqlite://")
+
+
+def test_configured_dsn_overrides_the_default():
+    config = Config()
+    config.storage.catalogue = "sqlite:///custom/place.sqlite"
+    assert config.catalogue_dsn() == "sqlite:///custom/place.sqlite"
+
+
+def test_a_non_file_dsn_survives_config_roundtrip(tmp_path):
+    from comicload.infra.config import load_config, save_config
+
+    config = Config()
+    config.storage.catalogue = "postgresql://user@host/comicload"
+    save_config(config, tmp_path / "c.toml")
+
+    assert load_config(tmp_path / "c.toml").catalogue_dsn() == (
+        "postgresql://user@host/comicload"
+    )
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `.venv/bin/python -m pytest tests/core/test_storage_registry.py tests/infra/test_storage_factory.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'comicload.core.storage_registry'`
+
+- [ ] **Step 3: Write minimal implementation**
+
+`src/comicload/core/storage_registry.py`:
+```python
+"""Storage backends are selected by DSN scheme, the same way signals and sinks are
+selected by name. Adding a backend requires no edit to any existing file.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Any, Protocol, TypeVar
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True, slots=True)
+class Dsn:
+    """A parsed storage address. `scheme` picks the backend; `target` is its own business."""
+
+    scheme: str
+    target: str
+
+
+class SupportsFromDsn(Protocol):
+    @classmethod
+    def from_dsn(cls, dsn: Dsn) -> Any: ...
+
+
+repository_registry: dict[str, type] = {}
+resolver_registry: dict[str, type] = {}
+
+
+def parse_dsn(dsn: str) -> Dsn:
+    if "://" not in dsn:
+        raise ValueError(
+            f"storage address must include a scheme, e.g. 'sqlite:///path/to.db', got {dsn!r}"
+        )
+    scheme, _, target = dsn.partition("://")
+    return Dsn(scheme=scheme.lower(), target=os.path.expanduser(target))
+
+
+def _register(registry: dict[str, type], scheme: str, kind: str):
+    def decorator(cls: type[T]) -> type[T]:
+        if scheme in registry:
+            raise ValueError(f"{kind} backend for scheme '{scheme}' is already registered")
+        registry[scheme] = cls
+        return cls
+
+    return decorator
+
+
+def register_repository(scheme: str):
+    return _register(repository_registry, scheme, "repository")
+
+
+def register_resolver(scheme: str):
+    return _register(resolver_registry, scheme, "resolver")
+
+
+def _open(registry: dict[str, type], dsn: str, kind: str) -> Any:
+    parsed = parse_dsn(dsn)
+    if parsed.scheme not in registry:
+        known = ", ".join(sorted(registry)) or "none"
+        raise KeyError(
+            f"no {kind} backend registered for '{parsed.scheme}'; available: {known}"
+        )
+    return registry[parsed.scheme].from_dsn(parsed)  # type: ignore[attr-defined]
+
+
+def open_repository(dsn: str) -> Any:
+    return _open(repository_registry, dsn, "repository")
+
+
+def open_resolver(dsn: str) -> Any:
+    return _open(resolver_registry, dsn, "resolver")
+```
+
+`src/comicload/infra/storage/factory.py`:
+```python
+"""Importing this module registers every built-in storage backend."""
+
+from __future__ import annotations
+
+from comicload.core.storage_registry import open_repository, open_resolver
+from comicload.infra.storage import catalogue, gcd_repo  # noqa: F401  (registers backends)
+
+__all__ = ["open_repository", "open_resolver"]
+```
+
+In `src/comicload/infra/storage/catalogue.py`, decorate the existing class and add a
+constructor from a DSN — do not change its existing `__init__`:
+
+```python
+from comicload.core.storage_registry import Dsn, register_repository
+
+
+@register_repository("sqlite")
+class SqliteRepository:
+    ...
+
+    @classmethod
+    def from_dsn(cls, dsn: Dsn) -> SqliteRepository:
+        return cls(Path(dsn.target))
+```
+
+Do the same in `gcd_repo.py`:
+
+```python
+from comicload.core.storage_registry import Dsn, register_resolver
+
+
+@register_resolver("sqlite")
+class SqliteIssueResolver:
+    ...
+
+    @classmethod
+    def from_dsn(cls, dsn: Dsn) -> SqliteIssueResolver:
+        return cls(Path(dsn.target))
+```
+
+In `src/comicload/infra/config.py`, replace path-typed storage with DSNs:
+
+```python
+class StorageConfig(BaseModel):
+    catalog: str = ""      # the GCD mirror — disposable
+    catalogue: str = ""    # the user's own results — precious
+
+
+class Config(BaseModel):
+    ...
+    storage: StorageConfig = Field(default_factory=StorageConfig)
+
+    def catalog_dsn(self) -> str:
+        if self.storage.catalog:
+            return self.storage.catalog
+        return f"sqlite://{user_data_path('comicload') / 'gcd.sqlite'}"
+
+    def catalogue_dsn(self) -> str:
+        if self.storage.catalogue:
+            return self.storage.catalogue
+        return f"sqlite://{user_data_path('comicload') / 'comicload.sqlite'}"
+```
+
+Keep `gcd_db_path()` as a thin helper for `catalog sync`, which genuinely needs a local file
+path to write a SQLite mirror into — but derive it from the DSN rather than from its own
+config field, and raise `ConfigError` if the configured catalog DSN is not `sqlite`.
+
+In `src/comicload/adapters/cli/app.py`, replace the direct constructions with factory calls,
+and change the `--db` options to accept a DSN string (keeping a bare path working by
+normalising it to `sqlite://<path>` so existing usage and tests do not break).
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `make check`
+Expected: all green, including the pre-existing 113 tests
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/comicload tests/core/test_storage_registry.py tests/infra/test_storage_factory.py
+git commit -m "refactor(storage): select backends by DSN scheme via registry"
+```
