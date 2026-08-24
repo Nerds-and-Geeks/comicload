@@ -38,6 +38,17 @@ class IssueResolver(Protocol):
 
     def resolve(self, candidate: Candidate, scope: Scope) -> list[Issue]: ...
 
+    def close(self) -> None: ...
+
+    def __enter__(self) -> IssueResolver: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None: ...
+
 
 @runtime_checkable
 class Sink(Protocol):

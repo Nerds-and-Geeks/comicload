@@ -55,8 +55,9 @@ class IdentifyService:
         return ordered, tuple(failures)
 
     def _tags(self, photo: Photo, candidate: Candidate) -> str:
+        safe_filename = photo.filename.replace(";", "%3B")
         return (
-            f"comicload;photo={photo.filename};"
+            f"comicload;photo={safe_filename};"
             f"signal={candidate.signal};conf={candidate.confidence:.2f}"
         )
 

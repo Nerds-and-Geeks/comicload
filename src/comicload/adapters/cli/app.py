@@ -116,14 +116,14 @@ def scan(
             f"{exc.args[0]}\nEdit 'signals.enabled' in your settings "
             "(see 'comicload config show') and scan again."
         ) from exc
-    service = IdentifyService(
-        signals=signals,
-        resolver=open_resolver(catalog),
-        progress=RichProgressReporter(),
-    )
-
     try:
-        results = service.run(source, _scope(publisher, years))
+        with open_resolver(catalog) as resolver:
+            service = IdentifyService(
+                signals=signals,
+                resolver=resolver,
+                progress=RichProgressReporter(),
+            )
+            results = service.run(source, _scope(publisher, years))
     except ComicloadError as exc:
         raise _fail(str(exc)) from exc
 
@@ -223,13 +223,22 @@ def catalog_sync(
     db: Annotated[str | None, typer.Option("--db", help="Where to build the database.")] = None,
 ) -> None:
     """Build the local comic metadata database from a Grand Comics Database dump."""
+    progress = RichProgressReporter()
     try:
         target = sqlite_path(_as_dsn(db)) if db else load_config().gcd_db_path()
-        counts = load_dump(dump, target)
+        progress.start(1, "Syncing database")
+        try:
+            counts = load_dump(
+                dump,
+                target,
+                on_progress=lambda batch: progress.advance(batch, "Loading rows"),
+            )
+        finally:
+            progress.finish()
     except ComicloadError as exc:
         raise _fail(str(exc)) from exc
 
-    for table, count in counts.items():
+    for table, count in sorted(counts.items()):
         console.print(f"  {table}: [bold]{count:,}[/bold] rows")
     console.print(f"[green]Database ready:[/green] {escape(str(target))}")
 
