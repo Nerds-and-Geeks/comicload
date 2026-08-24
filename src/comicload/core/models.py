@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date
+from enum import StrEnum
+
+
+@dataclass(frozen=True, slots=True)
+class Photo:
+    """One source image. `data` is the raw bytes so the domain never touches a filesystem."""
+
+    id: str
+    data: bytes
+    filename: str
+
+
+@dataclass(frozen=True, slots=True)
+class Scope:
+    """User-declared narrowing hint for a batch."""
+
+    publisher: str | None = None
+    year_from: int | None = None
+    year_to: int | None = None
+
+    def includes_year(self, year: int | None) -> bool:
+        if year is None:
+            return True
+        if self.year_from is not None and year < self.year_from:
+            return False
+        return not (self.year_to is not None and year > self.year_to)
+
+
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    """A guess produced by one signal. Fields are optional because signals see different things."""
+
+    signal: str
+    confidence: float
+    publisher: str | None = None
+    series: str | None = None
+    issue_number: str | None = None
+    printing: str | None = None
+    year: int | None = None
+    barcode: str | None = None
+    evidence: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class Issue:
+    """A resolved issue from the metadata catalogue."""
+
+    gcd_id: int
+    publisher: str
+    series: str
+    issue_number: str
+    on_sale_date: date | None = None
+    printing: str | None = None
+
+    def to_catalog_entry(self) -> CatalogEntry:
+        title = f"{self.series} #{self.issue_number}"
+        if self.printing:
+            title = f"{title} {self.printing}"
+        return CatalogEntry(
+            publisher_name=self.publisher,
+            series_name=self.series,
+            full_title=title,
+            release_date=self.on_sale_date,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogEntry:
+    """One row of the League of Comic Geeks import format. Field order matches their export."""
+
+    publisher_name: str
+    series_name: str
+    full_title: str
+    release_date: date | None = None
+    in_collection: bool = True
+    in_wish_list: bool = False
+    marked_read: bool = False
+    my_rating: str = ""
+    media_format: str = ""
+    price_paid: str = ""
+    date_purchased: str = ""
+    condition: str = ""
+    notes: str = ""
+    tags: str = ""
+
+
+class Bucket(StrEnum):
+    CONFIDENT = "confident"
+    AMBIGUOUS = "ambiguous"
+    UNRECOGNIZED = "unrecognized"
+
+
+@dataclass(frozen=True, slots=True)
+class IdentifyResult:
+    """Outcome for a single photo. Every photo produces exactly one of these."""
+
+    photo_id: str
+    filename: str
+    bucket: Bucket
+    entry: CatalogEntry | None = None
+    candidates: tuple[Candidate, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ImportResult:
+    """Outcome of pushing entries to a sink. `view_url` is set by sinks that have one."""
+
+    total: int
+    matched: int
+    unmatched: int
+    destination: str
+    view_url: str | None = None
