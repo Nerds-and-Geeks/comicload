@@ -440,13 +440,46 @@ reliable cross-series arc membership.
 Storyline completion therefore introduces a second metadata source with different
 characteristics from GCD — networked, rate-limited, API-key-bearing.
 
-| Source | Auth | Limits | Assessment |
-|---|---|---|---|
-| [Metron](https://metron-project.github.io/blog/api-best-practices) | HTTP Basic | 20/min burst, 5,000/day | **Preferred.** Supports `If-Modified-Since` and `modified_gt` incremental sync, so arc data can be synced once and refreshed by delta |
-| Comic Vine | API key | ~200/hr | Fallback. Broader coverage, stricter limit, no delta sync |
+**Comic Vine** is the arc source. Metron is explicitly out of scope — the `StoryArcCatalog`
+port exists so a second source can be added later if coverage proves inadequate, but building
+two now is speculative.
 
-Metron's incremental sync is the deciding factor: it keeps the feature inside the rate limit
-permanently rather than re-fetching on every run.
+| | Comic Vine |
+|---|---|
+| Auth | API key, via `SecretStore` → OS keychain |
+| Limit | ~200 requests/hour |
+| Coverage | Broad for modern material, thin for older |
+
+**Consequence of the 200/hr cap:** an initial arc sync for a large collection is slow — a
+2,000-issue collection is roughly a 10-hour first run. Required mitigations:
+- Cache arcs permanently in local SQLite. Arc definitions are effectively immutable; never
+  re-query a known arc.
+- Sync only arcs touching series the user actually owns, not the whole database.
+- Run as a background job, never blocking a command.
+
+### LLM-assisted arc discovery
+
+Comic Vine's coverage is thin for older material, where arc membership is often documented in
+prose (wikis, reading-order sites) rather than any structured API. An LLM with web search
+closes that gap.
+
+**The LLM proposes; GCD verifies.** This is the governing rule:
+
+1. LLM returns a proposed issue list for an arc
+2. **Every proposed issue is looked up in the local GCD mirror**
+3. Issues with no GCD match are discarded, not surfaced
+
+The LLM is never an authority on what exists — only a hypothesis generator about what belongs
+together. Verification is free because GCD is local, and a hallucinated issue fails closed
+rather than landing in the user's wishlist.
+
+Results are cached permanently alongside Comic Vine's, behind the same `StoryArcCatalog` port,
+so the source of an arc definition is invisible to callers.
+
+**Surface fit:** per-query LLM latency is wrong for a CLI. The services layer is already
+job-shaped (principle 6), so a web adapter runs arc discovery asynchronously without any
+service change. In the CLI this is an explicit opt-in command that populates the cache, not
+something that runs during `storylines`.
 
 ### Accepted costs
 
@@ -473,8 +506,9 @@ class StoryArcCatalog(Protocol):
     def issues_in_arc(self, arc_id: str) -> list[Issue]: ...
 ```
 
-Implementations: `MetronArcCatalog`, `ComicVineArcCatalog`, plus a `CachedArcCatalog`
-decorator holding the local SQLite cache. API keys go through the existing `SecretStore`
+Implementations: `ComicVineArcCatalog`, `LlmArcCatalog` (proposals verified against GCD),
+and a `CachedArcCatalog` decorator holding the local SQLite cache. Callers cannot tell which
+source produced an arc. API keys go through the existing `SecretStore`
 port into the OS keychain — the mechanism already specified under principle 8.
 
 Output reuses `CsvSink` unchanged: LoCG's format carries an `In Wish List` column, so the
@@ -488,10 +522,11 @@ need OCR or cover matching. Can ship after Phase 1, ahead of Phases 2-3.
 
 ### Open sub-questions
 
-- Metron's exact arc endpoint shape and whether an issue record carries its arc membership
-  directly must be confirmed against their OpenAPI schema at `/api/schema/` before
-  implementation.
-- Arc coverage for older material is likely thin in both sources. Expected behaviour when an
+- Comic Vine's `story_arc` endpoint shape, and whether an issue record carries arc membership
+  directly or requires a second call per arc, must be confirmed before implementation — it
+  determines how many requests a sync costs against the 200/hr cap.
+- Arc coverage for older material is thin in Comic Vine, which is what LLM-assisted discovery
+  is for. Expected behaviour when an
   owned issue belongs to no known arc: report as "no arc data", never as "complete".
 
 ---
