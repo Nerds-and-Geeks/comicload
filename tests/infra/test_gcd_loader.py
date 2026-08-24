@@ -349,3 +349,13 @@ def test_insert_data_containing_create_table_text_is_not_mistaken_for_ddl(tmp_pa
     )
     counts = load_dump(dump, tmp_path / "g.sqlite")
     assert counts["publisher"] == 2, "rows containing DDL-like text must not be dropped"
+
+
+def test_a_dump_that_loads_nothing_is_an_error_not_a_success(tmp_path):
+    """A dump whose tables all miss the mapping must not print 'Database ready'."""
+    dump = tmp_path / "wrong.sql"
+    dump.write_text(
+        "CREATE TABLE `other_table` (`id` int);\nINSERT INTO `other_table` VALUES (1);\n"
+    )
+    with pytest.raises(CatalogError, match="no comic data"):
+        load_dump(dump, tmp_path / "g.sqlite")

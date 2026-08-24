@@ -345,6 +345,11 @@ def _positions(source_table: str, columns: list[str], wanted: tuple[str, ...]) -
 
 def _check_join(conn: sqlite3.Connection, counts: dict[str, int]) -> None:
     """A load that produced rows but no joinable rows means the columns were misread."""
+    if not any(counts.values()):
+        raise CatalogError(
+            "the dump contained no comic data comicload recognises — no publisher, "
+            "series, or issue rows were found; is this really a GCD data dump?"
+        )
     if not all(counts[table] for table in ("publisher", "series", "issue")):
         return
     joined: int = conn.execute(_JOIN_CHECK).fetchone()[0]
