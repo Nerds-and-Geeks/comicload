@@ -287,3 +287,65 @@ def test_progress_reports_rows_as_they_load(tmp_path):
     seen: list[int] = []
     counts = load_dump(FIXTURE, tmp_path / "gcd.sqlite", on_progress=seen.append)
     assert sum(seen) == sum(counts.values())
+
+
+def test_a_failed_sync_leaves_the_previous_mirror_intact(tmp_path):
+    """C1: DROP TABLE ran before parsing, so any load failure destroyed the mirror."""
+    good = tmp_path / "good.sql"
+    good.write_text(
+        "CREATE TABLE `gcd_publisher` (`id` int, `name` varchar(255));\n"
+        "INSERT INTO `gcd_publisher` VALUES (1,'Marvel');\n"
+        "CREATE TABLE `gcd_series` (`id` int, `name` varchar(255), `publisher_id` int,"
+        " `year_began` int);\n"
+        "INSERT INTO `gcd_series` VALUES (10,'The Punisher',1,2000);\n"
+        "CREATE TABLE `gcd_issue` (`id` int, `number` varchar(50), `series_id` int,"
+        " `on_sale_date` date, `barcode` varchar(38));\n"
+        "INSERT INTO `gcd_issue` VALUES (100,'12',10,'2001-03-01','75960608457000111');\n"
+    )
+    db = tmp_path / "gcd.sqlite"
+    load_dump(good, db)
+
+    bad = tmp_path / "bad.sql"
+    bad.write_text("INSERT INTO `gcd_issue` VALUES (1,'1'")  # truncated mid-statement
+    with pytest.raises(CatalogError):
+        load_dump(bad, db)
+
+    conn = sqlite3.connect(db)
+    count = conn.execute("SELECT COUNT(*) FROM issue").fetchone()[0]
+    conn.close()
+    assert count == 1, "failed sync must not destroy the existing mirror"
+
+
+def test_database_qualified_table_names_are_loaded(tmp_path):
+    """I1: mysqldump --databases emits `db`.`table` names; these loaded 0 rows silently."""
+    dump = tmp_path / "qual.sql"
+    dump.write_text(
+        "CREATE TABLE `gcd`.`gcd_publisher` (`id` int, `name` varchar(255));\n"
+        "INSERT INTO `gcd`.`gcd_publisher` VALUES (1,'Marvel');\n"
+        "CREATE TABLE `gcd`.`gcd_series` (`id` int, `name` varchar(255), `publisher_id` int,"
+        " `year_began` int);\n"
+        "INSERT INTO `gcd`.`gcd_series` VALUES (10,'The Punisher',1,2000);\n"
+        "CREATE TABLE `gcd`.`gcd_issue` (`id` int, `number` varchar(50), `series_id` int,"
+        " `on_sale_date` date, `barcode` varchar(38));\n"
+        "INSERT INTO `gcd`.`gcd_issue` VALUES (100,'12',10,'2001-03-01','x1');\n"
+    )
+    counts = load_dump(dump, tmp_path / "g.sqlite")
+    assert counts == {"publisher": 1, "series": 1, "issue": 1}
+
+
+def test_insert_data_containing_create_table_text_is_not_mistaken_for_ddl(tmp_path):
+    """I2: _create_table_columns searched anywhere in the statement, so an INSERT whose
+    DATA contained 'CREATE TABLE x (' was silently discarded."""
+    dump = tmp_path / "evil.sql"
+    dump.write_text(
+        "CREATE TABLE `gcd_publisher` (`id` int, `name` varchar(255));\n"
+        "INSERT INTO `gcd_publisher` VALUES (1,'CREATE TABLE evil ('),(2,'Marvel');\n"
+        "CREATE TABLE `gcd_series` (`id` int, `name` varchar(255), `publisher_id` int,"
+        " `year_began` int);\n"
+        "INSERT INTO `gcd_series` VALUES (10,'S',2,2000);\n"
+        "CREATE TABLE `gcd_issue` (`id` int, `number` varchar(50), `series_id` int,"
+        " `on_sale_date` date, `barcode` varchar(38));\n"
+        "INSERT INTO `gcd_issue` VALUES (100,'1',10,'2001-03-01','x1');\n"
+    )
+    counts = load_dump(dump, tmp_path / "g.sqlite")
+    assert counts["publisher"] == 2, "rows containing DDL-like text must not be dropped"

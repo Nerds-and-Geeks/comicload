@@ -28,6 +28,7 @@ wider one with extra and reordered columns, which a positional loader gets wrong
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from collections.abc import Callable, Iterator
@@ -79,12 +80,13 @@ JOIN publisher p ON p.id = s.publisher_id
 
 _INSERT_HEADER_RE = re.compile(
     r"(?:INSERT|REPLACE)\s+(?:LOW_PRIORITY\s+|DELAYED\s+|HIGH_PRIORITY\s+|IGNORE\s+)*"
-    r"INTO\s+[`\"]?(\w+)[`\"]?\s*(\([^)]*\)\s*)?VALUES\s*",
+    r"INTO\s+(?:[`\"]?\w+[`\"]?\s*\.\s*)?[`\"]?(\w+)[`\"]?\s*(\([^)]*\)\s*)?VALUES\s*",
     re.IGNORECASE,
 )
 
 _CREATE_TABLE_RE = re.compile(
-    r"CREATE\s+(?:TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"]?(\w+)[`\"]?\s*\(",
+    r"CREATE\s+(?:TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"(?:[`\"]?\w+[`\"]?\s*\.\s*)?[`\"]?(\w+)[`\"]?\s*\(",
     re.IGNORECASE,
 )
 
@@ -215,11 +217,11 @@ _DEFINITION_NAME_RE = re.compile(r"^\s*(?:`([^`]+)`|\"([^\"]+)\"|(\w+))")
 
 def _create_table_columns(statement: str) -> tuple[str, list[str]] | None:
     """Return (table name, column names in order) for a CREATE TABLE statement."""
-    match = _CREATE_TABLE_RE.search(statement)
+    match = _CREATE_TABLE_RE.match(statement.lstrip())
     if not match:
         return None
 
-    body = statement[match.end() :]
+    body = statement.lstrip()[match.end() :]
     depth = 1
     in_string = False
     escaped = False
@@ -374,8 +376,11 @@ def load_dump(
     if not sql_path.exists():
         raise CatalogError(f"GCD dump not found: {sql_path}")
 
+    # Build into a scratch file and swap it in only on success, so a failed sync can
+    # never leave behind an empty or half-loaded mirror in place of a working one.
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    scratch = db_path.with_name(db_path.name + ".syncing")
+    conn = sqlite3.connect(scratch)
     try:
         conn.executescript(SCHEMA)
         counts = {local: 0 for local, _ in TABLE_MAP.values()}
@@ -423,6 +428,11 @@ def load_dump(
 
         _check_join(conn, counts)
         conn.commit()
-        return counts
-    finally:
+    except BaseException:
         conn.close()
+        scratch.unlink(missing_ok=True)
+        raise
+    else:
+        conn.close()
+        os.replace(scratch, db_path)
+        return counts
