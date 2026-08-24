@@ -60,3 +60,8 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "comicload.infra.sinks.locg_sink"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# pymupdf ships no type stubs; its calls are untyped in our strict context.
+module = "comicload.infra.pdf"
+disallow_untyped_calls = false
