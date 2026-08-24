@@ -65,11 +65,15 @@ def describe_cover(image_bytes: bytes | None, config: LlmConfig) -> tuple[str, s
         elif config.provider == "openai":
             return _call_openai(prepared_bytes, mime_type, config, api_key), None
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else ""
-        error_detail = (
-            json.loads(body).get("error", {}).get("message", body) if body else exc.reason
-        )
-        return "", f"HTTP Error {exc.code}: {error_detail}"
+        try:
+            body = exc.read().decode("utf-8", errors="ignore")
+            data = json.loads(body)
+            err_obj = data.get("error")
+            msg = err_obj.get("message") if isinstance(err_obj, dict) else None
+            msg = msg or data.get("message") or body
+        except Exception:
+            msg = exc.reason
+        return "", f"HTTP Error {exc.code}: {msg}"
     except Exception as exc:
         return "", f"API Error: {exc}"
 
