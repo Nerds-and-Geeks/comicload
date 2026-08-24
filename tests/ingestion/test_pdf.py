@@ -34,9 +34,9 @@ def test_photo_source_yields_one_photo_per_pdf_page(tmp_path):
     (tmp_path / "longbox.pdf").write_bytes(_pdf_bytes(pages=3))
     photos = list(LocalFolderPhotoSource(tmp_path).photos())
     assert [p.filename for p in photos] == [
-        "longbox.pdf p.1",
-        "longbox.pdf p.2",
-        "longbox.pdf p.3",
+        "longbox.pdf (page 1 of 3)",
+        "longbox.pdf (page 2 of 3)",
+        "longbox.pdf (page 3 of 3)",
     ]
     assert all(p.data.startswith(b"\x89PNG") for p in photos)
 

@@ -56,7 +56,11 @@ class LocalFolderPhotoSource:
                 except ComicloadError:
                     continue
                 for number, data in enumerate(pages, start=1):
-                    name = path.name if len(pages) == 1 else f"{path.name} p.{number}"
+                    name = (
+                        path.name
+                        if len(pages) == 1
+                        else f"{path.name} (page {number} of {len(pages)})"
+                    )
                     photo_id = hashlib.sha256(data).hexdigest()
                     if photo_id in seen:
                         continue
@@ -71,5 +75,17 @@ class LocalFolderPhotoSource:
             yield Photo(id=photo_id, data=data, filename=path.name)
 
     def count(self) -> int:
-        """How many files will be read. An upper bound: identical copies collapse."""
-        return len(self._paths())
+        """Total cover photos across image files and multi-page PDFs."""
+        total = 0
+        for path in self._paths():
+            if path.suffix.lower() == ".pdf":
+                try:
+                    import pymupdf
+
+                    with pymupdf.open(path) as doc:  # type: ignore[no-untyped-call]
+                        total += max(1, doc.page_count)
+                except Exception:
+                    total += 1
+            else:
+                total += 1
+        return total
