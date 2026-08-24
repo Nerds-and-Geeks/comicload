@@ -81,12 +81,14 @@ class ConfirmService:
             deduped.append(issue)
         return deduped
 
-    def confirm(self, result: IdentifyResult, issue: Issue) -> IdentifyResult:
-        """Record the person's identification. The pixels are released — the comic is known."""
+    def confirm(
+        self, result: IdentifyResult, issue: Issue, signal: str = "human"
+    ) -> IdentifyResult:
+        """Record an identification. The pixels are released — the comic is known."""
         entry = issue.to_catalog_entry()
         entry = dataclasses.replace(
             entry,
-            tags=f"comicload;photo={result.filename};signal=human;conf=1.00",
+            tags=f"comicload;photo={result.filename};signal={signal};conf=1.00",
         )
         confirmed = dataclasses.replace(
             result,

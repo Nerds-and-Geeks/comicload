@@ -248,6 +248,13 @@ def review(
     no_images: Annotated[
         bool, typer.Option("--no-images", help="Skip drawing covers in the terminal.")
     ] = False,
+    use_llm: Annotated[
+        bool,
+        typer.Option(
+            "--llm",
+            help="Use vision LLM to auto-resolve quarantine items before human wizard.",
+        ),
+    ] = False,
 ) -> None:
     """Identify the quarantined comics yourself — the covers are shown one by one."""
     config = load_config()
@@ -271,12 +278,45 @@ def review(
     except ComicloadError as exc:
         raise _fail(str(exc)) from exc
 
+    identified = 0
+    if use_llm or config.llm.enabled:
+        from comicload.quarantine.llm import describe_cover
+
+        console.print("[dim]Running LLM vision pass on quarantined items...[/dim]")
+        llm_auto_confirmed = 0
+        remaining_pending: list[IdentifyResult] = []
+        for result in pending:
+            query = describe_cover(result.image, config.llm)
+            if query:
+                matches = service.lookup(query)
+                if len(matches) == 1:
+                    confirmed = service.confirm(result, matches[0], signal="llm")
+                    assert confirmed.entry is not None
+                    console.print(
+                        f"[green]✔ LLM auto-confirmed ({escape(result.filename)}): "
+                        f"{escape(confirmed.entry.full_title)}[/green]"
+                    )
+                    llm_auto_confirmed += 1
+                    identified += 1
+                    continue
+            remaining_pending.append(result)
+        pending = remaining_pending
+        if llm_auto_confirmed > 0:
+            console.print(f"[green]LLM auto-confirmed {llm_auto_confirmed} item(s).[/green]\n")
+
+    if not pending:
+        console.print("[green]All quarantine items auto-confirmed by LLM![/green]")
+        if identified > 0:
+            confirmed_entries = repository.confirmed_entries()
+            import_res = CsvSink(out).push(confirmed_entries)
+            console.print(import_panel(import_res))
+        return
+
     console.print(
         f"[bold]{len(pending)} comic(s) in quarantine.[/bold]\n"
         "Covers are opening in your image viewer (and linked below).\n"
         "Type a number [1-N] to select, or type title & issue (e.g. [bold]Superman #35[/bold]).\n"
     )
-    identified = 0
     for position, result in enumerate(pending, start=1):
         image_path: Path | None = None
         if result.image:

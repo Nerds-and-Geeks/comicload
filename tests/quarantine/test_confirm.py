@@ -108,6 +108,17 @@ def test_confirm_records_a_full_entry_and_releases_the_pixels():
     assert repo.saved == [confirmed]
 
 
+def test_confirm_accepts_custom_signal_provenance():
+    repo = RecordingRepo()
+    service = ConfirmService(StubResolver([ISSUE]), repo)
+    quarantined = IdentifyResult("p1", "a.jpg", Bucket.UNRECOGNIZED, image=b"pixels")
+
+    confirmed = service.confirm(quarantined, ISSUE, signal="llm")
+
+    assert confirmed.bucket is Bucket.CONFIDENT
+    assert "signal=llm" in confirmed.entry.tags
+
+
 def test_lookup_collapses_indistinguishable_variant_covers():
     """Found against real data: 'Superman #27' resolved to 25 GCD rows, one per
     variant cover printing — same publisher/series/issue/date on every one, distinct

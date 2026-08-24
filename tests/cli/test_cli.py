@@ -7,7 +7,7 @@ from comicload.cli.app import app
 from comicload.config import load_config, save_config
 from comicload.errors import ComicloadError
 from comicload.export.csv import COLUMNS, read_csv
-from comicload.models import Candidate
+from comicload.models import Bucket, Candidate, IdentifyResult
 from comicload.quarantine.repository import SqliteRepository
 
 runner = CliRunner()
@@ -444,6 +444,48 @@ def test_status_command_prints_dashboard_panel(tmp_path):
     assert result.exit_code == 0
     assert "Status & Collection Summary" in result.stdout
     assert "Collection Identified" in result.stdout
+
+
+def test_review_llm_flag_auto_confirms_single_match(tmp_path, monkeypatch):
+    catalogue_db = tmp_path / "comicload.sqlite"
+    gcd_db = tmp_path / "gcd.sqlite"
+    out = tmp_path / "collection.csv"
+    runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(gcd_db)])
+
+    # Insert a fake quarantined item into repo
+    repo = SqliteRepository(catalogue_db)
+    quarantined = IdentifyResult(
+        photo_id="p1",
+        filename="superman.jpg",
+        bucket=Bucket.UNRECOGNIZED,
+        image=b"fake_cover_bytes",
+    )
+    repo.save([quarantined])
+
+    # Mock describe_cover to return "Alex + Ada #2"
+    monkeypatch.setattr(
+        "comicload.quarantine.llm.describe_cover",
+        lambda img, cfg: "Alex + Ada #2",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "review",
+            "--llm",
+            "--db",
+            str(gcd_db),
+            "--catalogue-db",
+            str(catalogue_db),
+            "--out",
+            str(out),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "LLM auto-confirmed" in result.stdout
+    assert out.exists()
+    assert "Alex + Ada #2" in out.read_text()
 
 
 def test_scan_wires_a_real_decoder_into_the_barcode_signal(tmp_path, monkeypatch):

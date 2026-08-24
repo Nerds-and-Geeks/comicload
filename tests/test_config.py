@@ -41,3 +41,12 @@ def test_the_file_is_never_world_readable_even_for_an_instant(tmp_path, monkeypa
 
     assert seen == [0o600], "the settings were readable by others before the chmod landed"
     assert (path.stat().st_mode & 0o777) == 0o600
+
+
+def test_llm_config_defaults_and_env_fallback(tmp_path, monkeypatch):
+    config = load_config(tmp_path / "missing.toml")
+    assert config.llm.enabled is False
+    assert config.llm.provider == "anthropic"
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret_key_123")
+    assert config.llm.resolved_api_key() == "secret_key_123"

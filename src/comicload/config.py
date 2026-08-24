@@ -26,9 +26,28 @@ class SignalsConfig(BaseModel):
     enabled: list[str] = Field(default_factory=lambda: ["barcode"])
 
 
+class LlmConfig(BaseModel):
+    enabled: bool = False
+    provider: str = "anthropic"
+    api_key: str = ""
+    model: str = "claude-3-5-sonnet-20241022"
+
+    def resolved_api_key(self) -> str:
+        if self.api_key:
+            return self.api_key
+        if self.provider == "anthropic":
+            return os.environ.get("ANTHROPIC_API_KEY", "")
+        if self.provider == "openai":
+            return os.environ.get("OPENAI_API_KEY", "")
+        if self.provider == "gemini":
+            return os.environ.get("GEMINI_API_KEY", "")
+        return os.environ.get("LLM_API_KEY", "")
+
+
 class Config(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     signals: SignalsConfig = Field(default_factory=SignalsConfig)
+    llm: LlmConfig = Field(default_factory=LlmConfig)
 
     def gcd_db_path(self) -> Path:
         if self.storage.catalog_db:
