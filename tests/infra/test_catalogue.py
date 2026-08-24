@@ -1,9 +1,11 @@
+import sqlite3
 from datetime import date
 
 import pytest
 
 from comicload.core.errors import CatalogError
 from comicload.core.models import Bucket, Candidate, CatalogEntry, IdentifyResult
+from comicload.infra.storage import catalogue
 from comicload.infra.storage.catalogue import SqliteRepository
 
 ENTRY = CatalogEntry(
@@ -145,3 +147,50 @@ def test_saving_still_creates_the_database(tmp_path):
     SqliteRepository(db).save([])
     assert db.exists()
     assert SqliteRepository(db).pending_review() == []
+
+
+# --- a migration must not be able to wedge an irreplaceable database ----------
+
+
+BROKEN_MIGRATION = "CREATE TABLE extra (id INTEGER); INSERT INTO no_such_table VALUES (1);"
+
+
+def test_a_failing_migration_leaves_the_database_unchanged_and_re_runnable(tmp_path, monkeypatch):
+    """executescript() auto-commits, so a half-applied migration used to persist forever."""
+    db = tmp_path / "comicload.sqlite"
+    SqliteRepository(db).save([CONFIDENT])
+
+    monkeypatch.setattr(catalogue, "MIGRATIONS", (*catalogue.MIGRATIONS, BROKEN_MIGRATION))
+    monkeypatch.setattr(catalogue, "SCHEMA_VERSION", catalogue.SCHEMA_VERSION + 1)
+
+    with pytest.raises(sqlite3.OperationalError):
+        SqliteRepository(db).pending_review()
+
+    conn = sqlite3.connect(db)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 1, "stamp moved despite failure"
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "extra" not in tables, "a partial schema change survived the failed migration"
+    conn.close()
+
+    monkeypatch.undo()
+    assert SqliteRepository(db).confirmed_entries() == [ENTRY]
+
+
+def test_a_catalogue_from_a_newer_comicload_is_refused(tmp_path):
+    """Better a clear refusal than a confusing OperationalError against precious data."""
+    db = tmp_path / "comicload.sqlite"
+    SqliteRepository(db).save([CONFIDENT])
+    conn = sqlite3.connect(db)
+    conn.execute(f"PRAGMA user_version = {catalogue.SCHEMA_VERSION + 1}")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CatalogError, match="newer comicload"):
+        SqliteRepository(db).pending_review()
+    with pytest.raises(CatalogError, match="newer comicload"):
+        SqliteRepository(db).save([CONFIDENT])
+
+
+def test_the_migrations_comment_matches_the_indexing():
+    """MIGRATIONS[n] migrates FROM version n; the comment used to say the opposite."""
+    assert len(catalogue.MIGRATIONS) == catalogue.SCHEMA_VERSION

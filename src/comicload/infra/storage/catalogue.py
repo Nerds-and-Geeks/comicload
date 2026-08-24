@@ -20,9 +20,11 @@ from comicload.core.storage_registry import Dsn, register_repository
 
 SCHEMA_VERSION = 1
 
-# Index = target version. MIGRATIONS[0] takes an empty or pre-versioned database to
-# version 1. To evolve the schema, append a new script and bump SCHEMA_VERSION —
-# never edit an existing entry, since users have already run it.
+# Index = the version a script migrates FROM. MIGRATIONS[0] takes an empty or
+# pre-versioned database (version 0) to version 1. To evolve the schema, append a new
+# script and bump SCHEMA_VERSION — never edit an existing entry, since users have
+# already run it. Statements are split on ';', so keep semicolons out of string
+# literals inside a migration script.
 MIGRATIONS: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS scan_result (
@@ -37,6 +39,34 @@ MIGRATIONS: tuple[str, ...] = (
 )
 
 
+def _statements(script: str) -> list[str]:
+    return [statement.strip() for statement in script.split(";") if statement.strip()]
+
+
+def _apply(conn: sqlite3.Connection, from_version: int) -> None:
+    """Run one migration and its version stamp as a single transaction.
+
+    executescript() commits before it runs, which left the stamp as a separate commit: a
+    migration that failed half way through kept its partial schema changes while
+    user_version stayed stale, so every later launch re-ran the same migration and failed
+    the same way, forever, on a database the user cannot regenerate.
+    """
+    previous = conn.isolation_level
+    conn.isolation_level = None  # take explicit control; DDL included
+    try:
+        conn.execute("BEGIN")
+        try:
+            for statement in _statements(MIGRATIONS[from_version]):
+                conn.execute(statement)
+            conn.execute(f"PRAGMA user_version = {from_version + 1}")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.isolation_level = previous
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     """Bring a database up to SCHEMA_VERSION, preserving existing rows.
 
@@ -44,11 +74,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
     rather than recreate. SQLite's user_version pragma is the stamp.
     """
     current: int = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current > SCHEMA_VERSION:
+        raise CatalogError(
+            f"this catalogue was written by a newer comicload (schema version {current}; "
+            f"this one understands {SCHEMA_VERSION}). Upgrade comicload, or point --db at "
+            "a different file — an older comicload must not write to it."
+        )
     for version in range(current, SCHEMA_VERSION):
-        conn.executescript(MIGRATIONS[version])
-    if current < SCHEMA_VERSION:
-        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-        conn.commit()
+        _apply(conn, version)
 
 
 def _entry_to_json(entry: CatalogEntry | None) -> str | None:
