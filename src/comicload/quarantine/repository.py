@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
+import re
 import sqlite3
 from collections.abc import Sequence
 from datetime import date
@@ -19,6 +20,28 @@ from PIL import Image
 
 from comicload.errors import CatalogError
 from comicload.models import Bucket, Candidate, CatalogEntry, IdentifyResult
+
+
+def _clean_entry_title(entry: CatalogEntry) -> CatalogEntry:
+    """Clean LoCG title formatting on stored catalogue entries."""
+    series = entry.series_name.replace(" - The Deluxe Edition", " - Deluxe Edition").strip()
+    title = entry.full_title.replace(" - The Deluxe Edition", " - Deluxe Edition")
+
+    # Strip printing suffixes like " 1st Printing"
+    title = re.sub(r"\s+\d+(st|nd|rd|th)\s+Printing", "", title, flags=re.IGNORECASE)
+
+    # Strip legacy dual parens like " (863)"
+    title = re.sub(r"\s*\(\d+\)", "", title)
+
+    # Strip unnumbered trade "[nn]"
+    title = re.sub(r"\s*#?\[nn\]", "", title, flags=re.IGNORECASE)
+
+    return dataclasses.replace(
+        entry,
+        series_name=series,
+        full_title=title.strip(),
+    )
+
 
 SCHEMA_VERSION = 3
 
@@ -248,4 +271,4 @@ class SqliteRepository:
 
     def confirmed_entries(self) -> list[CatalogEntry]:
         results = self._select("bucket = ?", [Bucket.CONFIDENT.value])
-        return [r.entry for r in results if r.entry is not None]
+        return [_clean_entry_title(r.entry) for r in results if r.entry is not None]

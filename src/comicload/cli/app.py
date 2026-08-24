@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
@@ -72,6 +73,37 @@ def _report_signal_failures(results: Sequence[IdentifyResult]) -> None:
             )
 
 
+def _rename_files_on_disk(results: Sequence[IdentifyResult], folder: Path | None = None) -> int:
+    """Rename scanned cover image files on disk to match identified comic titles."""
+    renamed = 0
+    for result in results:
+        if result.bucket is not Bucket.CONFIDENT or result.entry is None:
+            continue
+        path = Path(result.filename)
+        if not path.is_absolute() and folder:
+            path = folder / path
+        if not path.exists() or not path.is_file():
+            continue
+
+        safe_title = re.sub(r'[\\/*?:"<>|]', "", result.entry.full_title).strip()
+        if not safe_title:
+            continue
+        ext = path.suffix or ".jpg"
+        target = path.parent / f"{safe_title}{ext}"
+        if path.resolve() == target.resolve():
+            continue
+        counter = 1
+        while target.exists():
+            target = path.parent / f"{safe_title} ({counter}){ext}"
+            counter += 1
+        try:
+            path.rename(target)
+            renamed += 1
+        except OSError:
+            pass
+    return renamed
+
+
 @app.command()
 def scan(
     folder: Annotated[Path, typer.Argument(help="Folder containing your cover photos.")],
@@ -83,6 +115,14 @@ def scan(
     ] = None,
     save_old_run: Annotated[
         bool, typer.Option("--save-old-run", help="Preserve quarantine items from previous scans.")
+    ] = False,
+    rename_files: Annotated[
+        bool,
+        typer.Option(
+            "--rename-files",
+            "--rename",
+            help="Rename physical cover image files on disk to match identified comic titles.",
+        ),
     ] = False,
 ) -> None:
     """Identify every comic photo in a folder and write an import file."""
@@ -147,6 +187,11 @@ def scan(
     confirmed_entries = repository.confirmed_entries()
     result = CsvSink(out).push(confirmed_entries)
     console.print(import_panel(result))
+
+    if rename_files:
+        count = _rename_files_on_disk(results, folder=folder)
+        if count > 0:
+            console.print(f"[green]Renamed {count} cover image file(s) on disk.[/green]")
 
     pending = [r for r in results if r.bucket is not Bucket.CONFIDENT]
     if pending:
@@ -281,6 +326,14 @@ def review(
         typer.Option(
             "--llm",
             help="Use vision LLM to auto-resolve quarantine items before human wizard.",
+        ),
+    ] = False,
+    rename_files: Annotated[
+        bool,
+        typer.Option(
+            "--rename-files",
+            "--rename",
+            help="Rename physical cover image files on disk to match identified comic titles.",
         ),
     ] = False,
 ) -> None:
@@ -426,6 +479,11 @@ def review(
         confirmed_entries = repository.confirmed_entries()
         import_res = CsvSink(out).push(confirmed_entries)
         console.print(import_panel(import_res))
+        if rename_files:
+            confirmed_results = repository._select("bucket = ?", [Bucket.CONFIDENT.value])
+            count = _rename_files_on_disk(confirmed_results)
+            if count > 0:
+                console.print(f"[green]Renamed {count} cover image file(s) on disk.[/green]")
 
 
 @catalog_app.command("sync")

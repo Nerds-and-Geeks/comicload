@@ -81,10 +81,23 @@ def test_creates_database_on_first_save(tmp_path):
     assert db.exists()
 
 
-def test_confirmed_entries_returns_only_confident(repo):
+def test_confirmed_entries_returns_only_confident(repo: SqliteRepository):
     repo.save([CONFIDENT, AMBIGUOUS, UNRECOGNIZED])
     entries = repo.confirmed_entries()
     assert entries == [ENTRY]
+
+
+def test_confirmed_entries_cleans_stored_titles(repo: SqliteRepository):
+    old_entry = CatalogEntry(
+        publisher_name="DC",
+        series_name="Supergirl: Woman of Tomorrow - The Deluxe Edition",
+        full_title="Supergirl #2 1st Printing",
+        release_date=date(2025, 6, 11),
+    )
+    repo.save([IdentifyResult("p10", "old.jpg", Bucket.CONFIDENT, entry=old_entry)])
+    entries = repo.confirmed_entries()
+    assert entries[0].full_title == "Supergirl #2"
+    assert entries[0].series_name == "Supergirl: Woman of Tomorrow - Deluxe Edition"
 
 
 def test_pending_review_excludes_confident(repo):
