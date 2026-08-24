@@ -13,9 +13,12 @@ from comicload.catalog.loader import load_dump
 from comicload.catalog.repository import SqliteIssueResolver
 from comicload.cli.progress import RichProgressReporter
 from comicload.cli.render import (
+    candidates_table,
     console,
     cover_lines,
     import_panel,
+    item_panel,
+    open_cover_image,
     summary_table,
 )
 from comicload.cli.wiring import get_default_barcode_decoder
@@ -24,7 +27,7 @@ from comicload.errors import ComicloadError
 from comicload.export.csv import CsvSink, read_csv, validate_csv
 from comicload.identification.service import IdentifyService
 from comicload.ingestion.photos import LocalFolderPhotoSource
-from comicload.models import Bucket, IdentifyResult
+from comicload.models import Bucket, IdentifyResult, Issue
 from comicload.quarantine.repository import SqliteRepository
 from comicload.quarantine.service import ConfirmService
 from comicload.signals.registry import get_signal
@@ -223,59 +226,63 @@ def review(
         raise _fail(str(exc)) from exc
 
     console.print(
-        f"[bold]{len(pending)} comic(s) in quarantine.[/bold] "
-        "Type what you can see on each cover, e.g. [bold]Superman #35[/bold] "
-        "(add a year to narrow: [bold]Superman #35 2026[/bold]).\n"
+        f"[bold]{len(pending)} comic(s) in quarantine.[/bold]\n"
+        "Covers are opening in your image viewer. Type a number [1-N] to select, "
+        "or type title & issue (e.g. [bold]Superman #35[/bold]).\n"
     )
     identified = 0
     for position, result in enumerate(pending, start=1):
-        console.rule(f"{position} of {len(pending)} — {escape(result.filename)}")
-        if result.image and not no_images:
-            console.print(cover_lines(result.image), highlight=False)
-        hints = [c for c in result.candidates if c.barcode]
-        if hints:
-            console.print(f"[dim]barcode read: {escape(hints[0].barcode or '')}[/dim]")
+        console.print()
+        console.print(item_panel(result, position, len(pending)))
+
+        if result.image:
+            open_cover_image(result.image, result.filename)
+            if not no_images:
+                console.print(cover_lines(result.image), highlight=False)
+
+        current_issues: list[Issue] = []
+        for cand in result.candidates:
+            if cand.barcode:
+                current_issues.extend(service._resolver.resolve(cand))
 
         while True:
-            answer = typer.prompt(
-                "Who is this? (series #number, s=skip, q=quit)", default="s"
-            ).strip()
+            if current_issues:
+                console.print(candidates_table(current_issues))
+                prompt_msg = (
+                    f"Select [1-{len(current_issues)}], type search (e.g. 'Superman #35'), "
+                    "[s]kip, [q]uit"
+                )
+            else:
+                prompt_msg = "Type title & issue (e.g. 'Superman #35'), [s]kip, [q]uit"
+
+            answer = typer.prompt(prompt_msg, default="s").strip()
             if answer.lower() == "q":
                 console.print(f"\n[green]Identified {identified}[/green] this session.")
                 return
-            if answer.lower() in ("s", ""):
+            if answer.lower() == "s":
+                break
+
+            if answer.isdigit() and current_issues and 1 <= int(answer) <= len(current_issues):
+                selected_issue = current_issues[int(answer) - 1]
+                confirmed = service.confirm(result, selected_issue)
+                assert confirmed.entry is not None
+                console.print(
+                    f"[green]✔ Confirmed: {escape(confirmed.entry.full_title)} "
+                    "saved to your catalogue.[/green]\n"
+                )
+                identified += 1
                 break
 
             issues = service.lookup(answer)
             if not issues:
                 console.print(
-                    "[yellow]Nothing in the catalogue matches that.[/yellow] "
-                    "Check the spelling, or press s to skip."
+                    f"[yellow]No match found for '{escape(answer)}'.[/yellow] "
+                    "Check spelling, or press s to skip."
                 )
+                current_issues = []
                 continue
 
-            for index, issue in enumerate(issues, start=1):
-                date_text = issue.on_sale_date.isoformat() if issue.on_sale_date else "date unknown"
-                series_year = f" ({issue.series_year})" if issue.series_year else ""
-                console.print(
-                    f"  [bold]{index}[/bold]  {escape(issue.publisher)} · "
-                    f"{escape(issue.series)}{series_year} #{escape(issue.issue_number)}"
-                    f" · {date_text}"
-                )
-            choice = typer.prompt("Which one? (number, or s to search again)", default="1").strip()
-            if choice.lower() == "s":
-                continue
-            if not choice.isdigit() or not 1 <= int(choice) <= len(issues):
-                console.print("[yellow]That was not one of the numbers.[/yellow]")
-                continue
-
-            confirmed = service.confirm(result, issues[int(choice) - 1])
-            assert confirmed.entry is not None
-            console.print(
-                f"[green]✔ {escape(confirmed.entry.full_title)}[/green] saved to your catalogue.\n"
-            )
-            identified += 1
-            break
+            current_issues = issues
 
     console.print(
         f"\n[green]Identified {identified}[/green] of {len(pending)}. "

@@ -102,3 +102,59 @@ def cover_lines(image_bytes: bytes, width: int = 42) -> str:
                 cells.append(f"\033[38;2;{tr};{tg};{tb}m\033[48;2;{br};{bg_};{bb}m▀")
             rows.append("".join(cells) + "\033[0m")
         return "\n".join(rows)
+
+
+def open_cover_image(image_bytes: bytes, filename: str) -> None:
+    """Save thumbnail to a temp file and launch OS viewer (macOS open / QuickLook)."""
+    import contextlib
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    suffix = Path(filename).suffix or ".jpg"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(image_bytes)
+        tmp_path = tmp.name
+
+    with contextlib.suppress(Exception):
+        subprocess.Popen(
+            ["open", tmp_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+def item_panel(result: IdentifyResult, position: int, total: int) -> Panel:
+    """Rich panel showing item progress, filename, detected barcodes, and hints."""
+    lines = [
+        f"Filename:  [bold]{escape(result.filename)}[/bold]",
+        f"Status:    [yellow]{escape(result.bucket.value)}[/yellow]",
+    ]
+    barcodes = [c.barcode for c in result.candidates if c.barcode]
+    if barcodes:
+        lines.append(f"Barcode:   [cyan]{escape(barcodes[0])}[/cyan]")
+    return Panel(
+        "\n".join(lines),
+        title=f"Quarantine Item {position} of {total}",
+        border_style="cyan",
+    )
+
+
+def candidates_table(issues: Sequence[object]) -> Table:
+    """Numbered table of issue matches for quick [1-N] selection."""
+    table = Table(title="Catalogue Matches", show_header=True, header_style="bold green")
+    table.add_column("#", justify="right", style="bold yellow")
+    table.add_column("Series Title")
+    table.add_column("Issue #", justify="center")
+    table.add_column("Publisher")
+    table.add_column("On-Sale Date")
+
+    for idx, issue in enumerate(issues, start=1):
+        table.add_row(
+            str(idx),
+            escape(getattr(issue, "series_name", "")),
+            escape(getattr(issue, "number", "")),
+            escape(getattr(issue, "publisher_name", "")),
+            escape(str(getattr(issue, "on_sale_date", "") or "—")),
+        )
+    return table
