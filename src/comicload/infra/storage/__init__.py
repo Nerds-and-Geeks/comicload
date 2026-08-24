@@ -1,1 +1,0 @@
-"""Local metadata catalogue storage."""

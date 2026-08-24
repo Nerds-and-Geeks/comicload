@@ -11,25 +11,57 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "comicload"
 
-LAYERS = ("core", "services", "infra", "adapters")
+LAYERS = (
+    "domain",
+    "catalog",
+    "signals",
+    "ingestion",
+    "identification",
+    "quarantine",
+    "export",
+    "cli",
+)
 
-# Files that live directly in src/comicload/ rather than in a layer.
-ROOT_FILES = {"__init__.py"}
+# Files that live directly in src/comicload/ rather than in a domain module.
+ROOT_FILES = {"__init__.py", "config.py"}
 
-# Which comicload packages each layer may import. Its own layer is always allowed.
+# Which comicload packages each domain module may import.
 ALLOWED_INTERNAL = {
-    "core": ("comicload.core",),
-    "services": ("comicload.core",),
-    "infra": ("comicload.core",),
-    "adapters": ("comicload",),
+    "domain": ("comicload.domain",),
+    "catalog": ("comicload.domain", "comicload.catalog", "comicload.config"),
+    "signals": ("comicload.domain", "comicload.signals"),
+    "ingestion": ("comicload.domain", "comicload.ingestion"),
+    "identification": (
+        "comicload.domain",
+        "comicload.signals",
+        "comicload.catalog",
+        "comicload.identification",
+    ),
+    "quarantine": (
+        "comicload.domain",
+        "comicload.catalog",
+        "comicload.quarantine",
+        "comicload.signals",
+        "comicload.config",
+    ),
+    "export": ("comicload.domain", "comicload.export", "comicload.signals"),
+    "cli": ("comicload",),
 }
 
 # Layers that may not reach for anything outside the standard library.
-STDLIB_ONLY = ("core",)
+STDLIB_ONLY = ("domain",)
 
 # Layers that may not import comicload's own presentation libraries, print, or write to
-# a stream directly. Presentation belongs to adapters.
-QUIET_LAYERS = ("core", "services", "infra")
+# a stream directly. Presentation belongs to cli.
+QUIET_LAYERS = (
+    "domain",
+    "catalog",
+    "signals",
+    "ingestion",
+    "identification",
+    "quarantine",
+    "export",
+)
 
 PRESENTATION_PACKAGES = ("rich", "typer")
 
@@ -53,7 +85,8 @@ def _package_of(relative: str) -> list[str]:
 def _resolve_relative(relative: str, level: int, module: str | None) -> str:
     """What `from ..x import y` actually names, so relative imports cannot slip past."""
     parts = _package_of(relative)
-    base = parts[: len(parts) - (level - 1)] if level > 1 else parts
+    truncate = level - 1
+    base = parts[: len(parts) - truncate] if truncate < len(parts) else ["comicload"]
     if module:
         return ".".join([*base, module])
     return ".".join(base)
@@ -117,7 +150,8 @@ def _check_import(relative: str, layer: str, imported: str) -> list[str]:
         return problems
 
     if layer in QUIET_LAYERS and top in PRESENTATION_PACKAGES:
-        problems.append(f"{relative} imports {top}; presentation belongs in adapters/")
+        problems.append(f"{relative} imports {top}; presentation belongs in cli/")
+        return problems
         return problems
 
     if layer in STDLIB_ONLY and top not in sys.stdlib_module_names:
