@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from comicload.core.errors import CatalogError
 from comicload.core.models import Bucket, Candidate, CatalogEntry, IdentifyResult
 from comicload.core.storage_registry import Dsn, register_repository
 
@@ -87,7 +88,19 @@ class SqliteRepository:
     def from_dsn(cls, dsn: Dsn) -> SqliteRepository:
         return cls(Path(dsn.target))
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self, *, create: bool) -> sqlite3.Connection:
+        """Open the catalogue. Writes may create it; reads must not.
+
+        Reading from a database that is not there means the path is wrong or nothing has
+        been scanned yet. Creating one on the way past would turn a typo into an empty
+        catalogue and an affirmative "everything was identified".
+        """
+        if not create and not self._db_path.exists():
+            raise CatalogError(
+                f"no catalogue at {self._db_path}\n"
+                "Run 'comicload scan' on a folder of photos first — or check that path, "
+                "it may not be the one your scans went to."
+            )
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self._db_path)
         _migrate(conn)
@@ -104,7 +117,7 @@ class SqliteRepository:
             )
             for result in results
         ]
-        conn = self._connect()
+        conn = self._connect(create=True)
         try:
             conn.executemany(
                 """
@@ -123,7 +136,7 @@ class SqliteRepository:
             conn.close()
 
     def _select(self, where: str, params: Sequence[str]) -> list[IdentifyResult]:
-        conn = self._connect()
+        conn = self._connect(create=False)
         try:
             rows = conn.execute(
                 "SELECT photo_id, filename, bucket, entry, candidates "

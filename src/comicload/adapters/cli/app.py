@@ -190,7 +190,10 @@ def review(
 ) -> None:
     """Look at the comics comicload could not identify on its own."""
     catalogue = _as_dsn(db) if db else load_config().catalogue_dsn()
-    pending = open_repository(catalogue).pending_review()
+    try:
+        pending = open_repository(catalogue).pending_review()
+    except ComicloadError as exc:
+        raise _fail(str(exc)) from exc
 
     if not pending:
         console.print(

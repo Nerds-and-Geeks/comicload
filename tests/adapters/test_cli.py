@@ -139,10 +139,25 @@ def test_review_shows_what_scan_persisted(tmp_path, monkeypatch):
 
 
 def test_review_is_friendly_when_there_is_nothing_to_review(tmp_path):
-    result = runner.invoke(app, ["review", "--db", str(tmp_path / "empty.sqlite")])
+    empty = tmp_path / "empty.sqlite"
+    SqliteRepository(empty).save([])
+
+    result = runner.invoke(app, ["review", "--db", str(empty)])
 
     assert result.exit_code == 0
     assert "nothing to review" in result.stdout.lower()
+
+
+def test_review_on_a_database_that_does_not_exist_says_so(tmp_path):
+    """A typo in --db used to create the file and claim everything was identified."""
+    typo = tmp_path / "typo.sqlite"
+
+    result = runner.invoke(app, ["review", "--db", str(typo)])
+
+    assert result.exit_code != 0
+    assert "nothing to review" not in result.stdout.lower()
+    assert "comicload scan" in result.stdout
+    assert not typo.exists()
 
 
 # --- a broken signal must not masquerade as "not recognised" ------------------
