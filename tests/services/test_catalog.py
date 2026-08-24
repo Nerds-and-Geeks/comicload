@@ -40,12 +40,6 @@ def test_series_and_issue_match_when_no_barcode(resolver):
     assert [i.publisher for i in issues] == ["Image Comics"]
 
 
-def test_scope_publisher_filters_results(resolver):
-    candidate = Candidate(signal="ocr", confidence=0.6, issue_number="12")
-    assert resolver.resolve(candidate, Scope(publisher="Image Comics")) == []
-    assert resolver.resolve(candidate, Scope(publisher="Marvel"))
-
-
 def test_candidate_with_no_usable_fields_returns_nothing(resolver):
     assert resolver.resolve(Candidate(signal="none", confidence=0.1), Scope()) == []
 

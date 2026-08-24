@@ -11,104 +11,30 @@ from platformdirs import user_config_path, user_data_path
 from pydantic import BaseModel, Field, ValidationError
 
 from comicload.core.errors import ConfigError
-from comicload.core.storage_registry import parse_dsn
-
-
-class ExportConfig(BaseModel):
-    sink: str = "csv"
-
-
-class LocgConfig(BaseModel):
-    state_file: str = ""
-    confirm_before_import: bool = True
 
 
 class StorageConfig(BaseModel):
-    """Storage addresses, not paths: the scheme picks the backend, the rest is its business."""
-
-    catalog: str = ""  # the GCD mirror — disposable
-    catalogue: str = ""  # the user's own results — precious
-
-
-class ScanConfig(BaseModel):
-    default_publisher: str = ""
-    default_years: str = ""
-
-    def year_bounds(self) -> tuple[int | None, int | None]:
-        raw = self.default_years.strip()
-        if not raw:
-            return (None, None)
-        parts = [p.strip() for p in raw.split("-")]
-        if len(parts) == 1 and parts[0].isdigit():
-            y = int(parts[0])
-            return (y, y)
-        if (
-            len(parts) == 2
-            and (parts[0].isdigit() or parts[0] == "")
-            and (parts[1].isdigit() or parts[1] == "")
-        ):
-            if not parts[0] and not parts[1]:
-                return (None, None)
-            y_from = int(parts[0]) if parts[0].isdigit() else None
-            y_to = int(parts[1]) if parts[1].isdigit() else None
-            if y_from is not None and y_to is not None and y_from > y_to:
-                y_from, y_to = y_to, y_from
-            return (y_from, y_to)
-        raise ValueError(f"default_years must look like '1970-1985' or '1980', got {raw!r}")
+    catalog_db: str = ""  # Path to local GCD mirror database
+    catalogue_db: str = ""  # Path to local user review/quarantine database
 
 
 class SignalsConfig(BaseModel):
     enabled: list[str] = Field(default_factory=lambda: ["barcode"])
 
 
-class LlmConfig(BaseModel):
-    enabled: bool = False
-    provider: str = "anthropic"
-    model: str = "claude-haiku-4-5"
-    secret_name: str = "comicload/anthropic"
-
-
 class Config(BaseModel):
-    export: ExportConfig = Field(default_factory=ExportConfig)
-    locg: LocgConfig = Field(default_factory=LocgConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
-    scan: ScanConfig = Field(default_factory=ScanConfig)
     signals: SignalsConfig = Field(default_factory=SignalsConfig)
-    llm: LlmConfig = Field(default_factory=LlmConfig)
-
-    def catalog_dsn(self) -> str:
-        if self.storage.catalog:
-            return self.storage.catalog
-        return f"sqlite://{user_data_path('comicload') / 'gcd.sqlite'}"
-
-    def catalogue_dsn(self) -> str:
-        if self.storage.catalogue:
-            return self.storage.catalogue
-        return f"sqlite://{user_data_path('comicload') / 'comicload.sqlite'}"
 
     def gcd_db_path(self) -> Path:
-        """`catalog sync` writes a SQLite file, so it needs a real path, not just an address."""
-        return sqlite_path(self.catalog_dsn())
+        if self.storage.catalog_db:
+            return Path(self.storage.catalog_db).expanduser()
+        return user_data_path("comicload") / "gcd.sqlite"
 
-    def locg_state_path(self) -> Path:
-        if self.locg.state_file:
-            return Path(self.locg.state_file).expanduser()
-        return user_config_path("comicload") / "locg_state.json"
-
-
-def sqlite_path(dsn: str) -> Path:
-    """The local file behind a `sqlite://` address.
-
-    Only for work that genuinely needs a file on disk — building the GCD mirror. Everything
-    else goes through the storage registry and never learns whether a file is involved.
-    """
-    parsed = parse_dsn(dsn)
-    if parsed.scheme != "sqlite":
-        raise ConfigError(
-            f"'comicload catalog sync' builds a local SQLite file, but {dsn!r} is not a "
-            f"sqlite:// address; point the catalog at a sqlite:// address to sync it"
-        )
-    return Path(parsed.target)
+    def catalogue_db_path(self) -> Path:
+        if self.storage.catalogue_db:
+            return Path(self.storage.catalogue_db).expanduser()
+        return user_data_path("comicload") / "comicload.sqlite"
 
 
 def default_config_path() -> Path:
@@ -139,23 +65,10 @@ def _without_nulls(value: Any) -> Any:
 
 
 def _to_toml(config: Config) -> str:
-    """Serialise with tomli-w rather than by hand.
-
-    The hand-rolled writer quoted every value with a bare `"` and no escaping, so a
-    publisher named `My "Comics"`, a Windows path, or anything with a newline produced a
-    file that load_config could not read back. It also stringified every non-bool,
-    non-list value, so an int would have round-tripped as "30" and None as "None".
-    """
     return tomli_w.dumps(_without_nulls(config.model_dump()))
 
 
 def save_config(config: Config, path: Path | None = None) -> Path:
-    """Write the settings file, owner-readable from the moment it exists.
-
-    Written to a temporary file in the same directory (mkstemp creates it 0600) and moved
-    into place, so the settings are never briefly world-readable and a failed write never
-    leaves a half-written config behind.
-    """
     target = path or default_config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     body = _to_toml(config)

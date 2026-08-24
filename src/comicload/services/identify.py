@@ -35,21 +35,18 @@ class IdentifyService:
         self._progress = progress or NullProgressReporter()
         self._threshold = confident_threshold
 
-    def _gather(self, photo: Photo, scope: Scope) -> tuple[list[Candidate], tuple[str, ...]]:
-        """Every signal's guesses for one photo, plus the names of the ones that crashed.
-
-        A crashing signal must not stop the run — but the failure is reported back rather
-        than discarded, so 200 photos cannot come back as "not recognised" when the truth
-        is that one signal failed 200 times.
-        """
+    def _gather(
+        self, photo: Photo, scope: Scope | None = None
+    ) -> tuple[list[Candidate], tuple[str, ...]]:
         gathered: list[Candidate] = []
         failures: list[str] = []
+        target_scope = scope or Scope()
         for signal in self._signals:
             try:
-                gathered.extend(signal.identify(photo, scope))
+                gathered.extend(signal.identify(photo, target_scope))
             except ComicloadError:
-                raise  # deliberate, explained, and true of every photo: let it stop the run
-            except Exception:  # noqa: BLE001 - a crashing signal must not stop the run
+                raise
+            except Exception:  # noqa: BLE001
                 failures.append(getattr(signal, "name", type(signal).__name__))
         ordered = sorted(gathered, key=lambda c: c.confidence, reverse=True)
         return ordered, tuple(failures)
@@ -65,9 +62,10 @@ class IdentifyService:
         self,
         photo: Photo,
         candidates: list[Candidate],
-        scope: Scope,
+        scope: Scope | None = None,
         signal_failures: tuple[str, ...] = (),
     ) -> IdentifyResult:
+        target_scope = scope or Scope()
         if not candidates:
             return IdentifyResult(
                 photo_id=photo.id,
@@ -79,14 +77,11 @@ class IdentifyService:
 
         resolved_any = False
         for candidate in candidates:
-            issues: list[Issue] = self._resolver.resolve(candidate, scope)
+            issues: list[Issue] = self._resolver.resolve(candidate, target_scope)
             if not issues:
                 continue
             resolved_any = True
             if len(issues) == 1 and candidate.confidence >= self._threshold:
-                # The catalogue knows the issue; only the candidate knows which printing
-                # was photographed. Fusing them is this service's job, and the full title
-                # is still formed in exactly one place: Issue.to_catalog_entry().
                 issue = dataclasses.replace(issues[0], printing=candidate.printing)
                 entry = issue.to_catalog_entry()
                 entry = dataclasses.replace(
@@ -104,8 +99,6 @@ class IdentifyService:
                 )
 
         bucket = Bucket.AMBIGUOUS if resolved_any else Bucket.UNRECOGNIZED
-        # Quarantined photos keep their pixels: review happens days later, when the
-        # source folder may be gone, and the catalogue must show what it is asking about.
         return IdentifyResult(
             photo_id=photo.id,
             filename=photo.filename,
@@ -115,13 +108,14 @@ class IdentifyService:
             image=photo.data,
         )
 
-    def run(self, source: PhotoSource, scope: Scope) -> list[IdentifyResult]:
+    def run(self, source: PhotoSource, scope: Scope | None = None) -> list[IdentifyResult]:
+        target_scope = scope or Scope()
         self._progress.start(source.count(), "Identifying")
         results: list[IdentifyResult] = []
         try:
             for photo in source.photos():
-                candidates, failures = self._gather(photo, scope)
-                results.append(self._classify(photo, candidates, scope, failures))
+                candidates, failures = self._gather(photo, target_scope)
+                results.append(self._classify(photo, candidates, target_scope, failures))
                 self._progress.advance(1, photo.filename)
         finally:
             self._progress.finish()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+from types import TracebackType
 from typing import Protocol, runtime_checkable
 
 from comicload.core.models import (
@@ -36,7 +37,7 @@ class Signal(Protocol):
 class IssueResolver(Protocol):
     """Turns a guess into concrete catalogue issues, best match first."""
 
-    def resolve(self, candidate: Candidate, scope: Scope) -> list[Issue]: ...
+    def resolve(self, candidate: Candidate, scope: Scope | None = None) -> list[Issue]: ...
 
     def close(self) -> None: ...
 
@@ -46,7 +47,7 @@ class IssueResolver(Protocol):
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
-        traceback: object,
+        traceback: TracebackType | None,
     ) -> None: ...
 
 
@@ -79,17 +80,6 @@ class ProgressReporter(Protocol):
     def advance(self, amount: int = 1, message: str | None = None) -> None: ...
 
     def finish(self) -> None: ...
-
-
-@runtime_checkable
-class SecretStore(Protocol):
-    """Key/value secrets. Backed by the OS keychain, never by config.toml."""
-
-    def get(self, name: str) -> str | None: ...
-
-    def set(self, name: str, value: str) -> None: ...
-
-    def delete(self, name: str) -> None: ...
 
 
 class NullProgressReporter:

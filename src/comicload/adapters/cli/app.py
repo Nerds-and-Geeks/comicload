@@ -8,8 +8,7 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
-import comicload.infra.signals  # noqa: F401  (registers signals)
-import comicload.infra.sinks  # noqa: F401  (registers sinks)
+import comicload.infra.signals  # noqa: F401
 from comicload.adapters.cli.progress import RichProgressReporter
 from comicload.adapters.cli.render import (
     console,
@@ -19,16 +18,15 @@ from comicload.adapters.cli.render import (
 )
 from comicload.adapters.cli.wiring import get_default_barcode_decoder
 from comicload.core.errors import ComicloadError
-from comicload.core.models import Bucket, IdentifyResult, Scope
+from comicload.core.models import Bucket, IdentifyResult
 from comicload.core.registry import get_signal
-from comicload.infra.config import Config, load_config, save_config, sqlite_path
+from comicload.infra.config import Config, load_config, save_config
 from comicload.infra.photos import LocalFolderPhotoSource
-from comicload.infra.secrets import KeyringSecretStore
 from comicload.infra.sinks.csv_sink import CsvSink, read_csv, validate_csv
-from comicload.infra.storage.factory import open_repository, open_resolver
+from comicload.infra.storage.catalogue import SqliteRepository
 from comicload.infra.storage.gcd_loader import load_dump
+from comicload.infra.storage.gcd_repo import SqliteIssueResolver
 from comicload.services.confirm import ConfirmService
-from comicload.services.export import ExportService
 from comicload.services.identify import IdentifyService
 
 try:
@@ -49,20 +47,11 @@ DEFAULT_OUT = Path("collection.csv")
 
 
 def _fail(message: str) -> typer.Exit:
-    """Print a message written for a comic collector, and stop with a non-zero status."""
     console.print(f"[red]{escape(message)}[/red]")
     return typer.Exit(code=1)
 
 
-def _as_dsn(value: str) -> str:
-    """Accept either a storage address or the bare file path collectors have always typed."""
-    if "://" in value:
-        return value
-    return f"sqlite://{Path(value).expanduser()}"
-
-
 def _report_signal_failures(results: Sequence[IdentifyResult]) -> None:
-    """Say when a signal broke, instead of passing its silence off as 'not recognised'."""
     if not results:
         return
     counts = Counter(name for result in results for name in result.signal_failures)
@@ -70,8 +59,7 @@ def _report_signal_failures(results: Sequence[IdentifyResult]) -> None:
         if count == len(results):
             console.print(
                 f"\n[red]The '{escape(name)}' signal failed on all {count} photo(s).[/red] "
-                "Nothing above was really examined — these comics are not 'not recognised', "
-                "they were never read. Fix the error above and scan again."
+                "Nothing above was really examined. Fix the error above and scan again."
             )
         else:
             console.print(
@@ -80,51 +68,20 @@ def _report_signal_failures(results: Sequence[IdentifyResult]) -> None:
             )
 
 
-def _scope(publisher: str | None, years: str | None) -> Scope:
-    year_from = year_to = None
-    if years:
-        raw = years.strip()
-        parts = [p.strip() for p in raw.split("-")]
-        if len(parts) == 1 and parts[0].isdigit():
-            year_from = year_to = int(parts[0])
-        elif (
-            len(parts) == 2
-            and (parts[0].isdigit() or parts[0] == "")
-            and (parts[1].isdigit() or parts[1] == "")
-        ):
-            year_from = int(parts[0]) if parts[0].isdigit() else None
-            year_to = int(parts[1]) if parts[1].isdigit() else None
-            if year_from is not None and year_to is not None and year_from > year_to:
-                year_from, year_to = year_to, year_from
-        else:
-            raise typer.BadParameter("--years must look like 1970-1985 or 1980")
-    return Scope(publisher=publisher, year_from=year_from, year_to=year_to)
-
-
 @app.command()
 def scan(
     folder: Annotated[Path, typer.Argument(help="Folder containing your cover photos.")],
     out: Annotated[Path, typer.Option("--out", "-o", help="Where to write the CSV.")] = DEFAULT_OUT,
-    publisher: Annotated[
-        str | None, typer.Option("--publisher", help="Narrow to one publisher.")
-    ] = None,
-    years: Annotated[
-        str | None, typer.Option("--years", help="Narrow to a year range, e.g. 1970-1985.")
-    ] = None,
-    db: Annotated[
-        str | None, typer.Option("--db", help="Path or address of the metadata database.")
-    ] = None,
+    db: Annotated[Path | None, typer.Option("--db", help="Path of the metadata database.")] = None,
     catalogue_db: Annotated[
-        str | None,
-        typer.Option(
-            "--catalogue-db", help="Path or address of your own catalogue of scan results."
-        ),
+        Path | None,
+        typer.Option("--catalogue-db", help="Path of your catalogue of scan results."),
     ] = None,
 ) -> None:
     """Identify every comic photo in a folder and write an import file."""
     config = load_config()
-    catalog = _as_dsn(db) if db else config.catalog_dsn()
-    catalogue = _as_dsn(catalogue_db) if catalogue_db else config.catalogue_dsn()
+    catalog_path = db or config.gcd_db_path()
+    catalogue_path = catalogue_db or config.catalogue_db_path()
 
     try:
         source = LocalFolderPhotoSource(folder)
@@ -144,29 +101,26 @@ def scan(
             f"{exc.args[0]}\nEdit 'signals.enabled' in your settings "
             "(see 'comicload config show') and scan again."
         ) from exc
+
     try:
-        with open_resolver(catalog) as resolver:
+        with SqliteIssueResolver(catalog_path) as resolver:
             service = IdentifyService(
                 signals=signals,
                 resolver=resolver,
                 progress=RichProgressReporter(),
             )
-            results = service.run(source, _scope(publisher, years))
+            results = service.run(source)
     except ComicloadError as exc:
         raise _fail(str(exc)) from exc
 
-    # Save first, then export what the catalogue holds. The CSV is rewritten whole, so
-    # exporting only this run's results would replace the last box of comics with this one.
-    repository = open_repository(catalogue)
+    repository = SqliteRepository(catalogue_path)
     repository.save(results)
 
     console.print(summary_table(results))
     _report_signal_failures(results)
 
-    try:
-        result = ExportService(CsvSink(out)).export_entries(repository.confirmed_entries())
-    except ComicloadError as exc:
-        raise _fail(str(exc)) from exc
+    confirmed_entries = repository.confirmed_entries()
+    result = CsvSink(out).push(confirmed_entries)
     console.print(import_panel(result))
 
     pending = [r for r in results if r.bucket is not Bucket.CONFIDENT]
@@ -215,33 +169,27 @@ def import_csv(
         raise typer.Exit(code=1)
 
     config = load_config()
-    result = _LocgPlaywrightSink(config.locg_state_path()).push(entries)
+    result = _LocgPlaywrightSink(config.catalogue_db_path()).push(entries)
     console.print(import_panel(result))
 
 
 @app.command()
 def review(
-    db: Annotated[
-        str | None,
-        typer.Option("--db", help="Path or address of the metadata database."),
-    ] = None,
+    db: Annotated[Path | None, typer.Option("--db", help="Path of the metadata database.")] = None,
     catalogue_db: Annotated[
-        str | None,
-        typer.Option(
-            "--catalogue-db", help="Path or address of your own catalogue of scan results."
-        ),
+        Path | None,
+        typer.Option("--catalogue-db", help="Path of your catalogue of scan results."),
     ] = None,
     no_images: Annotated[
-        bool,
-        typer.Option("--no-images", help="Skip drawing covers in the terminal."),
+        bool, typer.Option("--no-images", help="Skip drawing covers in the terminal.")
     ] = False,
 ) -> None:
     """Identify the quarantined comics yourself — the covers are shown one by one."""
     config = load_config()
-    catalogue = _as_dsn(catalogue_db) if catalogue_db else config.catalogue_dsn()
-    catalog = _as_dsn(db) if db else config.catalog_dsn()
+    catalogue_path = catalogue_db or config.catalogue_db_path()
+    catalog_path = db or config.gcd_db_path()
     try:
-        repository = open_repository(catalogue)
+        repository = SqliteRepository(catalogue_path)
         pending = repository.pending_review()
     except ComicloadError as exc:
         raise _fail(str(exc)) from exc
@@ -254,7 +202,7 @@ def review(
         return
 
     try:
-        service = ConfirmService(open_resolver(catalog), repository)
+        service = ConfirmService(SqliteIssueResolver(catalog_path), repository)
     except ComicloadError as exc:
         raise _fail(str(exc)) from exc
 
@@ -322,12 +270,12 @@ def review(
 @catalog_app.command("sync")
 def catalog_sync(
     dump: Annotated[Path, typer.Argument(help="Path to the downloaded GCD .sql dump.")],
-    db: Annotated[str | None, typer.Option("--db", help="Where to build the database.")] = None,
+    db: Annotated[Path | None, typer.Option("--db", help="Where to build the database.")] = None,
 ) -> None:
     """Build the local comic metadata database from a Grand Comics Database dump."""
     progress = RichProgressReporter()
     try:
-        target = sqlite_path(_as_dsn(db)) if db else load_config().gcd_db_path()
+        target = db or load_config().gcd_db_path()
         progress.start(1, "Syncing database")
         try:
             counts = load_dump(
@@ -364,16 +312,6 @@ def config_init(
     """Create a settings file with sensible defaults."""
     target = save_config(Config(), path)
     console.print(f"[green]Settings written to[/green] {escape(str(target))}")
-
-
-@config_app.command("keys")
-def config_keys(
-    name: Annotated[str, typer.Argument(help="Which key to store, e.g. comicload/anthropic.")],
-) -> None:
-    """Store an API key in your system keychain. It is never written to a file."""
-    value = typer.prompt("Value", hide_input=True)
-    KeyringSecretStore().set(name, value)
-    console.print(f"[green]Saved[/green] {escape(name)} to your keychain.")
 
 
 def main() -> None:

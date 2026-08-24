@@ -13,7 +13,6 @@ dependencies = [
     "rich>=13.7",
     "pydantic>=2.7",
     "platformdirs>=4.2",
-    "keyring>=25.0",
     "pillow>=10.3",
     "pyzbar>=0.1.9",
     "tomli-w>=1.0",

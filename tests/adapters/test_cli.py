@@ -92,7 +92,7 @@ def test_import_locg_flag_is_rejected_without_the_extra(tmp_path):
 def test_config_show_prints_current_settings(tmp_path):
     result = runner.invoke(app, ["config", "show", "--path", str(tmp_path / "c.toml")])
     assert result.exit_code == 0
-    assert "csv" in result.stdout
+    assert "barcode" in result.stdout
 
 
 # --- beyond the brief: the review queue now has a database behind it (Task 14) ---
