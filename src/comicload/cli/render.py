@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import io
 import os
+import subprocess
+import tempfile
 from collections.abc import Sequence
 
 from PIL import Image
@@ -108,10 +111,6 @@ def cover_lines(image_bytes: bytes, width: int = 42) -> str:
 
 def open_cover_image(image_bytes: bytes, filename: str) -> None:
     """Save thumbnail to a temp file and launch OS viewer (macOS open / QuickLook)."""
-    import contextlib
-    import subprocess
-    import tempfile
-
     suffix = ".png" if image_bytes.startswith(b"\x89PNG") else ".jpg"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(image_bytes)

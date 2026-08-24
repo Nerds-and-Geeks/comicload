@@ -122,7 +122,5 @@ def test_decodes_a_slightly_skewed_real_scan_five_fixed_rows_missed():
     img = render("00111", module_px=4, height=300)
     # simulate a slight skew by shearing a few rows out of alignment — approximate
     # with a resize that nudges vertical scale so fixed fractions drift off-row
-    from PIL import Image as PILImage
-
-    skewed = img.resize((img.width, 287), PILImage.Resampling.NEAREST)
+    skewed = img.resize((img.width, 287), Image.Resampling.NEAREST)
     assert decode_ean5(skewed) == "00111"

@@ -4,6 +4,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from PIL import Image as PILImage
 
 from comicload.errors import CatalogError
 from comicload.models import Bucket, Candidate, CatalogEntry, IdentifyResult
@@ -258,8 +259,6 @@ def test_a_version_one_catalogue_is_migrated_and_keeps_its_rows(tmp_path):
 def test_quarantined_rows_keep_a_viewable_image(tmp_path):
     """Review happens days later when the source folder may be gone — the catalogue
     must be able to show the cover it is asking about."""
-    from PIL import Image as PILImage
-
     buffer = io.BytesIO()
     PILImage.new("RGB", (2000, 3000), (200, 40, 40)).save(buffer, format="PNG")
     repo = SqliteRepository(tmp_path / "c.sqlite")

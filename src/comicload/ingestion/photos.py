@@ -4,6 +4,8 @@ import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 
+import pymupdf
+
 from comicload.errors import ComicloadError
 from comicload.ingestion.pdf import pages_png
 from comicload.models import Photo
@@ -80,8 +82,6 @@ class LocalFolderPhotoSource:
         for path in self._paths():
             if path.suffix.lower() == ".pdf":
                 try:
-                    import pymupdf
-
                     with pymupdf.open(path) as doc:  # type: ignore[no-untyped-call]
                         total += max(1, doc.page_count)
                 except Exception:
