@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from comicload.core.storage_registry import (
@@ -86,3 +88,35 @@ def test_duplicate_scheme_registration_is_rejected():
             @classmethod
             def from_dsn(cls, dsn):
                 return cls()
+
+
+# --- the storage seam must stay type-checked ---------------------------------
+
+
+def test_open_repository_is_typed_as_the_port_not_any():
+    """Returning Any here switched off mypy at exactly the boundary the port guards."""
+    import typing
+
+    from comicload.core.ports import IssueResolver, Repository
+    from comicload.core.storage_registry import open_resolver
+
+    assert typing.get_type_hints(open_repository)["return"] is Repository
+    assert typing.get_type_hints(open_resolver)["return"] is IssueResolver
+
+
+def test_mypy_rejects_a_call_the_repository_port_does_not_have(tmp_path, monkeypatch):
+    """The proof that type checking is really back on at the storage boundary."""
+    from mypy import api
+
+    src = Path(__file__).resolve().parent.parent.parent / "src"
+    monkeypatch.setenv("MYPYPATH", str(src))
+
+    snippet = tmp_path / "snippet.py"
+    snippet.write_text(
+        "from comicload.core.storage_registry import open_repository\n"
+        "open_repository('sqlite:///x.db').no_such_method()\n"
+    )
+    stdout, _, status = api.run(["--strict", "--no-incremental", str(snippet)])
+
+    assert status != 0, f"mypy accepted a call the Repository port does not have:\n{stdout}"
+    assert "no_such_method" in stdout, stdout

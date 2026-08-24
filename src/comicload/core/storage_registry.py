@@ -9,6 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, cast
 
+from comicload.core.ports import IssueResolver, Repository
+
 T = TypeVar("T")
 
 
@@ -76,12 +78,19 @@ def _open(registry: dict[str, type], dsn: str, kind: str) -> Any:
     return backend.from_dsn(parsed)
 
 
-def open_repository(dsn: str) -> Any:
-    return _open(repository_registry, dsn, "repository")
+def open_repository(dsn: str) -> Repository:
+    """A backend for a DSN, typed as the port it must satisfy.
+
+    The cast is the same deal core.registry makes: the registry cannot prove a backend
+    implements the Protocol, but returning Any would switch off type checking at exactly
+    the seam these Protocols exist to guard.
+    """
+    return cast(Repository, _open(repository_registry, dsn, "repository"))
 
 
-def open_resolver(dsn: str) -> Any:
-    return _open(resolver_registry, dsn, "resolver")
+def open_resolver(dsn: str) -> IssueResolver:
+    """A resolver backend for a DSN, typed as the port it must satisfy."""
+    return cast(IssueResolver, _open(resolver_registry, dsn, "resolver"))
 
 
 def available_repositories() -> list[str]:
