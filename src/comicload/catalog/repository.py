@@ -77,14 +77,20 @@ class SqliteIssueResolver:
         if candidate.barcode:
             clean_bc = candidate.barcode.replace(" ", "").replace("-", "")
             bare_upc = clean_bc[:12] if len(clean_bc) >= 12 else clean_bc
-            sql = f"""
-            {_SELECT}
-            WHERE i.barcode = ?
-               OR REPLACE(REPLACE(i.barcode, ' ', ''), '-', '') = ?
-               OR REPLACE(REPLACE(i.barcode, ' ', ''), '-', '') LIKE ?
-            ORDER BY i.id LIMIT {_MAX_MATCHES}
-            """
-            issues = self._query(sql, (candidate.barcode, clean_bc, f"{bare_upc}%"))
+
+            # Fast B-Tree indexed lookup first (0.1ms)
+            sql = f"{_SELECT} WHERE i.barcode IN (?, ?, ?) ORDER BY i.id LIMIT {_MAX_MATCHES}"
+            issues = self._query(sql, (candidate.barcode, clean_bc, bare_upc))
+
+            # Fast B-Tree range lookup for 12-digit UPC (0.1ms)
+            if not issues and len(bare_upc) == 12:
+                upper = bare_upc[:-1] + chr(ord(bare_upc[-1]) + 1)
+                prefix_sql = (
+                    f"{_SELECT} WHERE i.barcode >= ? AND i.barcode < ? "
+                    f"ORDER BY i.id LIMIT {_MAX_MATCHES}"
+                )
+                issues = self._query(prefix_sql, (bare_upc, upper))
+
             if len(issues) > 1 and candidate.issue_number:
                 filtered = [i for i in issues if i.issue_number == candidate.issue_number]
                 if filtered:

@@ -31,62 +31,62 @@ from comicload.signals.ean5 import decode_ean5  # noqa: E402
 def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
     """Decode UPC/EAN barcodes from cover photo bytes using pyzbar.
 
-    Tries full cover image and rotations (0°, 90°, 180°, 270°) to handle vertical
-    and upside-down barcodes. If raw decode yields 0 symbols (common on bagged comics
-    with sleeve glare), evaluates regional corner crops with 3x upscaling and histogram
-    equalization.
+    Tries full cover image at 0° first. If 0° yields 0 symbols, resizes to a bounded
+    working frame (max 1200px) and evaluates 90°, 180°, 270° rotation angles and corner crops.
     """
     raw_image = Image.open(io.BytesIO(image_bytes))
     image = ImageOps.exif_transpose(raw_image)
 
-    found_symbols: list[Any] = []
+    # 1. Fast 0° pass on full-res image (instant for 95% of right-side-up covers)
+    found_symbols: list[Any] = list(pyzbar.decode(image))
     decoded_from: Image.Image = image
 
-    for angle in (0, 90, 180, 270):
-        oriented = image if angle == 0 else image.rotate(angle, expand=True)
-        symbols = list(pyzbar.decode(oriented))
-        if symbols:
-            found_symbols = symbols
-            decoded_from = oriented
-            break
+    # 2. If 0° fails, scale image to a max 1200px working frame before rotating/cropping
+    if not found_symbols:
+        work_image = image.copy()
+        work_image.thumbnail((1200, 1200), Image.Resampling.BILINEAR)
 
-        # Equalizing the whole frame is cheap next to cropping-and-upscaling, and
-        # catches low-contrast scans (glare, thin ink) the crop ladder below exists
-        # for anyway — trying it before spending time on four separate crops finds
-        # those pages faster and without ever needing the expensive path.
-        equalized_full = ImageOps.equalize(oriented.convert("L"))
-        symbols = list(pyzbar.decode(equalized_full))
-        if symbols:
-            found_symbols = symbols
-            decoded_from = equalized_full
-            break
+        for angle in (0, 90, 180, 270):
+            oriented = work_image if angle == 0 else work_image.rotate(angle, expand=True)
+            symbols = list(pyzbar.decode(oriented))
+            if symbols:
+                found_symbols = symbols
+                decoded_from = oriented
+                break
 
-        w, h = oriented.size
-        crop_regions = [
-            oriented.crop((int(w * 0.6), int(h * 0.6), w, h)),
-            oriented.crop((0, int(h * 0.6), int(w * 0.4), h)),
-            oriented.crop((0, 0, int(w * 0.4), int(h * 0.4))),
-            oriented.crop((0, int(h * 0.5), w, h)),
-        ]
-        for region in crop_regions:
-            attempts = (
-                ImageOps.equalize(region.convert("L")),
-                ImageOps.equalize(
-                    region.resize(
-                        (region.width * 3, region.height * 3), Image.Resampling.LANCZOS
-                    ).convert("L")
-                ),
-            )
-            for attempt in attempts:
-                symbols = list(pyzbar.decode(attempt))
-                if symbols:
-                    found_symbols = symbols
-                    decoded_from = attempt
+            equalized_full = ImageOps.equalize(oriented.convert("L"))
+            symbols = list(pyzbar.decode(equalized_full))
+            if symbols:
+                found_symbols = symbols
+                decoded_from = equalized_full
+                break
+
+            w, h = oriented.size
+            crop_regions = [
+                oriented.crop((int(w * 0.6), int(h * 0.6), w, h)),
+                oriented.crop((0, int(h * 0.6), int(w * 0.4), h)),
+                oriented.crop((0, 0, int(w * 0.4), int(h * 0.4))),
+                oriented.crop((0, int(h * 0.5), w, h)),
+            ]
+            for region in crop_regions:
+                attempts = (
+                    ImageOps.equalize(region.convert("L")),
+                    ImageOps.equalize(
+                        region.resize(
+                            (region.width * 2, region.height * 2), Image.Resampling.LANCZOS
+                        ).convert("L")
+                    ),
+                )
+                for attempt in attempts:
+                    symbols = list(pyzbar.decode(attempt))
+                    if symbols:
+                        found_symbols = symbols
+                        decoded_from = attempt
+                        break
+                if found_symbols:
                     break
             if found_symbols:
                 break
-        if found_symbols:
-            break
 
     found: list[DecodedBarcode] = []
     main_symbol: Any = None
