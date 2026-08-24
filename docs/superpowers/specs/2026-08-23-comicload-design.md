@@ -181,6 +181,20 @@ Because collection era is unknown, no single signal can be primary.
 
 A vintage book: OCR reads "25¢, Nov 1974, Marvel corner box" → narrows to a window; cover match picks within it. A modern book: barcode alone ends it.
 
+### KNOWN DIVERGENCE: signals do not actually vote
+
+This section describes three signals voting, and that is the intended design. The
+implementation in `services/identify.py` does **not** do this — it sorts candidates by
+confidence descending and returns the first that resolves to exactly one issue above the
+threshold. First-match-wins, not consensus.
+
+Harmless today with only the barcode signal registered. **Wrong as soon as a second signal
+lands**, because two signals disagreeing should route to AMBIGUOUS rather than letting the
+higher-confidence one win unchallenged — that is precisely the case the review queue exists
+for.
+
+Must be fixed before the OCR signal (Phase 2) ships, not after.
+
 ### Scope hint
 
 A global cover index is infeasible — GCD has ~2M+ issue records, and the wall is bandwidth to download that many scans, not storage (CLIP embeddings are ~2KB each).
