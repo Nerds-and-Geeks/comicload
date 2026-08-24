@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import tomllib
 from pathlib import Path
+from typing import Any
 
+import tomli_w
 from platformdirs import user_config_path, user_data_path
 from pydantic import BaseModel, Field, ValidationError
 
@@ -112,25 +116,43 @@ def load_config(path: Path | None = None) -> Config:
         raise ConfigError(f"{target} has an invalid configuration: {exc}") from exc
 
 
+def _without_nulls(value: Any) -> Any:
+    """TOML has no null. A field that is None is simply absent from the file."""
+    if isinstance(value, dict):
+        return {k: _without_nulls(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_without_nulls(item) for item in value if item is not None]
+    return value
+
+
 def _to_toml(config: Config) -> str:
-    lines: list[str] = []
-    for section, values in config.model_dump().items():
-        lines.append(f"[{section}]")
-        for key, value in values.items():
-            if isinstance(value, bool):
-                lines.append(f"{key} = {str(value).lower()}")
-            elif isinstance(value, list):
-                rendered = ", ".join(f'"{item}"' for item in value)
-                lines.append(f"{key} = [{rendered}]")
-            else:
-                lines.append(f'{key} = "{value}"')
-        lines.append("")
-    return "\n".join(lines)
+    """Serialise with tomli-w rather than by hand.
+
+    The hand-rolled writer quoted every value with a bare `"` and no escaping, so a
+    publisher named `My "Comics"`, a Windows path, or anything with a newline produced a
+    file that load_config could not read back. It also stringified every non-bool,
+    non-list value, so an int would have round-tripped as "30" and None as "None".
+    """
+    return tomli_w.dumps(_without_nulls(config.model_dump()))
 
 
 def save_config(config: Config, path: Path | None = None) -> Path:
+    """Write the settings file, owner-readable from the moment it exists.
+
+    Written to a temporary file in the same directory (mkstemp creates it 0600) and moved
+    into place, so the settings are never briefly world-readable and a failed write never
+    leaves a half-written config behind.
+    """
     target = path or default_config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(_to_toml(config))
-    target.chmod(0o600)
+    body = _to_toml(config)
+
+    handle, temporary = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(body)
+        os.replace(temporary, target)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
     return target

@@ -16,6 +16,7 @@ dependencies = [
     "keyring>=25.0",
     "pillow>=10.3",
     "pyzbar>=0.1.9",
+    "tomli-w>=1.0",
 ]
 
 [project.optional-dependencies]
