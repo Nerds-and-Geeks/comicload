@@ -77,13 +77,18 @@ class SqliteIssueResolver:
         if candidate.barcode:
             sql = f"{_SELECT} WHERE i.barcode = ? ORDER BY i.id LIMIT {_MAX_MATCHES}"
             issues = self._query(sql, (candidate.barcode,))
-            if not issues and len(candidate.barcode) == 12:
-                upper = candidate.barcode[:-1] + chr(ord(candidate.barcode[-1]) + 1)
+            if not issues and len(candidate.barcode) >= 12:
+                bare_upc = candidate.barcode[:12]
+                upper = bare_upc[:-1] + chr(ord(bare_upc[-1]) + 1)
                 prefix_sql = (
-                    f"{_SELECT} WHERE i.barcode >= ? AND i.barcode < ? "
+                    f"{_SELECT} WHERE (i.barcode = ? OR (i.barcode >= ? AND i.barcode < ?)) "
                     f"ORDER BY i.id LIMIT {_MAX_MATCHES}"
                 )
-                issues = self._query(prefix_sql, (candidate.barcode, upper))
+                issues = self._query(prefix_sql, (bare_upc, bare_upc, upper))
+                if len(issues) > 1 and candidate.issue_number:
+                    filtered = [i for i in issues if i.issue_number == candidate.issue_number]
+                    if filtered:
+                        return filtered
             return issues
 
         if candidate.series and candidate.issue_number:
