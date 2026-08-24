@@ -52,21 +52,55 @@ def _import_pyzbar() -> Any:
     """Import pyzbar lazily, and say what to install when its native library is absent."""
     try:
         from pyzbar import pyzbar
-    except (ImportError, OSError) as exc:  # zbar itself is missing, not just the wheel
+
+        return pyzbar
+    except (ImportError, OSError) as exc:
+        import os
+        import platform
+
+        if platform.system() == "Darwin" and os.path.exists("/opt/homebrew/lib/libzbar.dylib"):
+            dyld_path = os.environ.get("DYLD_LIBRARY_PATH")
+            os.environ["DYLD_LIBRARY_PATH"] = (
+                f"{dyld_path}:/opt/homebrew/lib" if dyld_path else "/opt/homebrew/lib"
+            )
+            try:
+                from pyzbar import pyzbar
+
+                return pyzbar
+            except (ImportError, OSError):
+                pass
         raise ComicloadError(f"{MISSING_ZBAR}\n\n({exc})") from exc
-    return pyzbar
 
 
 def _pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
-    from PIL import Image
+    from PIL import Image, ImageOps
 
     pyzbar = _import_pyzbar()
 
-    image = Image.open(io.BytesIO(image_bytes))
+    raw_image = Image.open(io.BytesIO(image_bytes))
+    image = ImageOps.exif_transpose(raw_image)
+
+    found_symbols: list[Any] = list(pyzbar.decode(image))
+
+    if not found_symbols:
+        w, h = image.size
+        crop_regions = [
+            image.crop((int(w * 0.6), int(h * 0.6), w, h)),
+            image.crop((0, int(h * 0.6), int(w * 0.4), h)),
+            image.crop((0, 0, int(w * 0.4), int(h * 0.4))),
+            image.crop((0, int(h * 0.5), w, h)),
+        ]
+        for region in crop_regions:
+            scaled = region.resize((region.width * 3, region.height * 3), Image.Resampling.LANCZOS)
+            equalized = ImageOps.equalize(scaled.convert("L"))
+            found_symbols = list(pyzbar.decode(equalized))
+            if found_symbols:
+                break
+
     found: list[DecodedBarcode] = []
     main: str | None = None
     supplement: str | None = None
-    for result in pyzbar.decode(image):
+    for result in found_symbols:
         value = result.data.decode("ascii", errors="ignore")
         if len(value) == 5:
             supplement = value
