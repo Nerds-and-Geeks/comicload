@@ -3039,3 +3039,243 @@ git commit -m "docs: add README written for comic collectors, not developers"
 - **Phase 4 — LoCG import.** `LocgPlaywrightSink`, `comicload config locg`, `view_url` capture, HAR-replay tests. Independent of Phases 2–3; can follow immediately.
 - **Phase 2 — OCR signal.** Needs an era-spanning fixture photo set assembled first.
 - **Phase 3 — cover matching.** Blocked on resolving cover-image licensing.
+
+---
+
+### Task 13: Developer experience — one-command setup, test, run
+
+**Executed out of order, immediately after Task 1, so every later task benefits.**
+
+**Files:**
+- Create: `Makefile`, `CONTRIBUTING.md`
+- Test: `tests/test_dx.py`
+
+**Interfaces:**
+- Consumes: `pyproject.toml` from Task 1
+- Produces: `make setup`, `make install`, `make test`, `make lint`, `make typecheck`, `make check`, `make run`, `make clean`
+
+**Why CONTRIBUTING.md and not README:** principle 5 requires the README to read for comic collectors. Developer instructions live separately so neither audience wades through the other's content.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/test_dx.py`:
+```python
+import re
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+MAKEFILE = ROOT / "Makefile"
+CONTRIBUTING = ROOT / "CONTRIBUTING.md"
+
+REQUIRED_TARGETS = [
+    "setup",
+    "install",
+    "test",
+    "lint",
+    "typecheck",
+    "check",
+    "run",
+    "clean",
+]
+
+
+def _targets() -> set[str]:
+    pattern = re.compile(r"^([a-zA-Z][\w-]*):", re.MULTILINE)
+    return set(pattern.findall(MAKEFILE.read_text()))
+
+
+def test_makefile_exists():
+    assert MAKEFILE.exists()
+
+
+def test_every_required_target_is_defined():
+    defined = _targets()
+    missing = [t for t in REQUIRED_TARGETS if t not in defined]
+    assert not missing, f"Makefile is missing targets: {missing}"
+
+
+def test_all_targets_are_phony():
+    """Every target is a command, not a file, so none may be skipped as up-to-date."""
+    text = MAKEFILE.read_text()
+    phony = re.search(r"^\.PHONY:\s*(.+)$", text, re.MULTILINE)
+    assert phony, "Makefile must declare .PHONY"
+    declared = set(phony.group(1).split())
+    missing = [t for t in REQUIRED_TARGETS if t not in declared]
+    assert not missing, f"targets not declared .PHONY: {missing}"
+
+
+def test_make_help_is_the_default_and_lists_targets():
+    result = subprocess.run(
+        ["make", "-C", str(ROOT)], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stderr
+    for target in REQUIRED_TARGETS:
+        assert target in result.stdout, f"'make' output does not mention '{target}'"
+
+
+def test_make_lint_passes_on_current_tree():
+    result = subprocess.run(
+        ["make", "-C", str(ROOT), "lint"], capture_output=True, text=True, timeout=180
+    )
+    assert result.returncode == 0, f"make lint failed:\n{result.stdout}\n{result.stderr}"
+
+
+def test_contributing_documents_setup_and_test():
+    assert CONTRIBUTING.exists()
+    text = CONTRIBUTING.read_text()
+    assert "make setup" in text
+    assert "make test" in text
+    assert "zbar" in text.lower()
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `.venv/bin/python -m pytest tests/test_dx.py -v`
+Expected: FAIL — `assert MAKEFILE.exists()` fails
+
+- [ ] **Step 3: Write minimal implementation**
+
+`Makefile`:
+```make
+.PHONY: help setup install test lint typecheck check run clean
+
+PYTHON := .venv/bin/python
+UV := uv
+
+help:
+	@echo "comicload — development commands"
+	@echo ""
+	@echo "  make setup      create .venv and install everything (run this first)"
+	@echo "  make install    reinstall the package in editable mode"
+	@echo "  make test       run the test suite"
+	@echo "  make lint       check formatting and style with ruff"
+	@echo "  make typecheck  check types with mypy"
+	@echo "  make check      lint + typecheck + test (run before every commit)"
+	@echo "  make run        run the CLI, e.g. make run ARGS='scan ./photos'"
+	@echo "  make clean      remove caches and build artifacts"
+
+setup:
+	$(UV) venv --python 3.12 .venv
+	$(UV) pip install --python $(PYTHON) -e ".[dev]"
+	@echo ""
+	@echo "Ready. Barcode reading also needs the zbar library: brew install zbar"
+
+install:
+	$(UV) pip install --python $(PYTHON) -e ".[dev]"
+
+test:
+	$(PYTHON) -m pytest -q
+
+lint:
+	$(PYTHON) -m ruff check src tests
+	$(PYTHON) -m ruff format --check src tests
+
+typecheck:
+	$(PYTHON) -m mypy
+
+check: lint typecheck test
+
+run:
+	$(PYTHON) -m comicload.adapters.cli.app $(ARGS)
+
+clean:
+	rm -rf .pytest_cache .ruff_cache .mypy_cache build dist *.egg-info
+	find . -type d -name __pycache__ -not -path "./.venv/*" -exec rm -rf {} +
+```
+
+`CONTRIBUTING.md`:
+````markdown
+# Developing comicload
+
+## Setup
+
+One command:
+
+```bash
+make setup
+```
+
+That creates `.venv` with Python 3.12 and installs comicload plus its dev tools
+in editable mode.
+
+Barcode reading needs the native zbar library, which pip cannot install:
+
+```bash
+brew install zbar
+```
+
+The test suite does not need zbar — the barcode tests inject a stub decoder — so
+you can develop and test without it. You only need it to run against real photos.
+
+## Everyday commands
+
+```bash
+make test        # run the suite
+make lint        # ruff check + format check
+make typecheck   # mypy
+make check       # all three — run this before committing
+```
+
+## Running the CLI locally
+
+```bash
+make run ARGS='--help'
+make run ARGS='scan ./photos --out out.csv'
+```
+
+Or activate the venv and use the installed entry point:
+
+```bash
+source .venv/bin/activate
+comicload --help
+```
+
+## Architecture rules
+
+`tests/test_architecture.py` enforces the layering, and it will fail the build if
+broken:
+
+- `core/` imports stdlib only
+- `services/` imports `core/` only
+- `infra/` imports `core/` only
+- Only `adapters/` may import Rich or Typer, or call `print()`
+
+Everything else reports progress through the `ProgressReporter` port. This is what
+keeps a future web interface a sibling of `adapters/cli/` rather than a rewrite.
+
+## Adding a signal or a sink
+
+Register it — do not edit existing files:
+
+```python
+@register_signal("my_signal")
+class MySignal:
+    name = "my_signal"
+
+    def identify(self, photo: Photo, scope: Scope) -> list[Candidate]: ...
+```
+
+Then enable it in config under `[signals] enabled`.
+
+## Tests
+
+Every commit must be green. Tests live beside the layer they cover under `tests/`.
+Fixtures are in `tests/fixtures/` and are force-added past `.gitignore`, which
+excludes `*.csv` and `*.sqlite` by default.
+````
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `.venv/bin/python -m pytest tests/test_dx.py -v`
+Expected: PASS — 6 passed
+
+Then: `make check`
+Expected: lint, typecheck, and tests all pass
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add Makefile CONTRIBUTING.md tests/test_dx.py
+git commit -m "chore: add Makefile and contributor guide for one-command setup"
+```
