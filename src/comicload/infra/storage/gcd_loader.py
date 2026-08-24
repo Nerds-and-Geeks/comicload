@@ -55,8 +55,10 @@ CREATE TABLE issue (
     barcode TEXT
 );
 CREATE INDEX idx_issue_barcode ON issue(barcode);
-CREATE INDEX idx_series_name ON series(name);
-CREATE INDEX idx_publisher_name ON publisher(name);
+CREATE INDEX idx_series_name ON series(name COLLATE NOCASE);
+CREATE INDEX idx_issue_series ON issue(series_id);
+CREATE INDEX idx_series_publisher ON series(publisher_id);
+CREATE INDEX idx_publisher_name ON publisher(name COLLATE NOCASE);
 """
 
 # Which dump table feeds which local table, and which columns we need *by name*.
