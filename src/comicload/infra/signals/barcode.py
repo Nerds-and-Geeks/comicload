@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import io
+import os
+import platform
 from collections.abc import Callable, Sequence
 from typing import Any
+
+from PIL import Image, ImageOps
 
 from comicload.core.errors import ComicloadError
 from comicload.core.models import Candidate, Photo, Scope
@@ -23,6 +27,19 @@ _PRINTING_LABELS = {
     "4": "4th Printing",
     "5": "5th Printing",
 }
+
+
+def _setup_mac_zbar_path() -> None:
+    """Ensure macOS Apple Silicon Homebrew libzbar path is registered in DYLD_LIBRARY_PATH."""
+    if platform.system() == "Darwin" and os.path.exists("/opt/homebrew/lib/libzbar.dylib"):
+        dyld_path = os.environ.get("DYLD_LIBRARY_PATH")
+        if not dyld_path or "/opt/homebrew/lib" not in dyld_path:
+            os.environ["DYLD_LIBRARY_PATH"] = (
+                f"{dyld_path}:/opt/homebrew/lib" if dyld_path else "/opt/homebrew/lib"
+            )
+
+
+_setup_mac_zbar_path()
 
 
 def decode_supplement(supplement: str) -> tuple[str | None, str | None]:
@@ -55,26 +72,10 @@ def _import_pyzbar() -> Any:
 
         return pyzbar
     except (ImportError, OSError) as exc:
-        import os
-        import platform
-
-        if platform.system() == "Darwin" and os.path.exists("/opt/homebrew/lib/libzbar.dylib"):
-            dyld_path = os.environ.get("DYLD_LIBRARY_PATH")
-            os.environ["DYLD_LIBRARY_PATH"] = (
-                f"{dyld_path}:/opt/homebrew/lib" if dyld_path else "/opt/homebrew/lib"
-            )
-            try:
-                from pyzbar import pyzbar
-
-                return pyzbar
-            except (ImportError, OSError):
-                pass
         raise ComicloadError(f"{MISSING_ZBAR}\n\n({exc})") from exc
 
 
 def _pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
-    from PIL import Image, ImageOps
-
     pyzbar = _import_pyzbar()
 
     raw_image = Image.open(io.BytesIO(image_bytes))
