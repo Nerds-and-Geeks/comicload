@@ -204,6 +204,9 @@ def review(
         Path | None,
         typer.Option("--catalogue-db", help="Path of your catalogue of scan results."),
     ] = None,
+    out: Annotated[
+        Path, typer.Option("--out", "-o", help="Where to write the updated CSV.")
+    ] = DEFAULT_OUT,
     no_images: Annotated[
         bool, typer.Option("--no-images", help="Skip drawing covers in the terminal.")
     ] = False,
@@ -232,18 +235,20 @@ def review(
 
     console.print(
         f"[bold]{len(pending)} comic(s) in quarantine.[/bold]\n"
-        "Covers are opening in your image viewer. Type a number [1-N] to select, "
-        "or type title & issue (e.g. [bold]Superman #35[/bold]).\n"
+        "Covers are opening in your image viewer (and linked below).\n"
+        "Type a number [1-N] to select, or type title & issue (e.g. [bold]Superman #35[/bold]).\n"
     )
     identified = 0
     for position, result in enumerate(pending, start=1):
-        console.print()
-        console.print(item_panel(result, position, len(pending)))
-
+        image_path: Path | None = None
         if result.image:
-            open_cover_image(result.image, result.filename)
-            if not no_images:
-                console.print(cover_lines(result.image), highlight=False)
+            image_path = open_cover_image(result.image, result.filename)
+
+        console.print()
+        console.print(item_panel(result, position, len(pending), image_path=image_path))
+
+        if result.image and not no_images:
+            console.print(cover_lines(result.image), highlight=False)
 
         current_issues: list[Issue] = []
         for cand in result.candidates:
@@ -263,6 +268,10 @@ def review(
             answer = typer.prompt(prompt_msg, default="s").strip()
             if answer.lower() == "q":
                 console.print(f"\n[green]Identified {identified}[/green] this session.")
+                if identified > 0:
+                    confirmed_entries = repository.confirmed_entries()
+                    import_res = CsvSink(out).push(confirmed_entries)
+                    console.print(import_panel(import_res))
                 return
             if answer.lower() == "s":
                 break
@@ -289,10 +298,11 @@ def review(
 
             current_issues = issues
 
-    console.print(
-        f"\n[green]Identified {identified}[/green] of {len(pending)}. "
-        "Re-run [bold]comicload scan[/bold] or export again to refresh your CSV."
-    )
+    console.print(f"\n[green]Identified {identified}[/green] of {len(pending)}.")
+    if identified > 0:
+        confirmed_entries = repository.confirmed_entries()
+        import_res = CsvSink(out).push(confirmed_entries)
+        console.print(import_panel(import_res))
 
 
 @catalog_app.command("sync")

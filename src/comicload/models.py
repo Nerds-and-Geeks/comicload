@@ -58,6 +58,10 @@ class Issue:
     series_year: int | None = None
     """Year the series began — how collectors tell Superman (1939) from Superman (2023)."""
 
+    @property
+    def gcd_url(self) -> str:
+        return f"https://www.comics.org/issue/{self.gcd_id}/"
+
     def to_catalog_entry(self) -> CatalogEntry:
         title = f"{self.series} #{self.issue_number}"
         if self.printing:

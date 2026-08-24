@@ -7,6 +7,7 @@ import os
 import subprocess
 import tempfile
 from collections.abc import Sequence
+from pathlib import Path
 
 from PIL import Image
 from rich.console import Console
@@ -109,27 +110,36 @@ def cover_lines(image_bytes: bytes, width: int = 42) -> str:
         return "\n".join(rows)
 
 
-def open_cover_image(image_bytes: bytes, filename: str) -> None:
-    """Save thumbnail to a temp file and launch OS viewer (macOS open / QuickLook)."""
+def open_cover_image(image_bytes: bytes, filename: str) -> Path:
+    """Save thumbnail to a temp file and launch OS viewer (macOS open / QuickLook).
+
+    Returns the temp Path so the CLI can render clickable terminal links.
+    """
     suffix = ".png" if image_bytes.startswith(b"\x89PNG") else ".jpg"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp.write(image_bytes)
-        tmp_path = tmp.name
+        tmp_path = Path(tmp.name)
 
     with contextlib.suppress(Exception):
         subprocess.Popen(
-            ["open", tmp_path],
+            ["open", str(tmp_path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+    return tmp_path
 
 
-def item_panel(result: IdentifyResult, position: int, total: int) -> Panel:
-    """Rich panel showing item progress, filename, detected barcodes, and hints."""
+def item_panel(
+    result: IdentifyResult, position: int, total: int, image_path: Path | None = None
+) -> Panel:
+    """Rich panel showing item progress, filename, detected barcodes, and clickable image link."""
     lines = [
         f"Filename:  [bold]{escape(result.filename)}[/bold]",
         f"Status:    [yellow]{escape(result.bucket.value)}[/yellow]",
     ]
+    if image_path:
+        url = f"file://{image_path.resolve()}"
+        lines.append(f"Image:     [link={url}]📷 Click to view cover photo[/link]")
     barcodes = [c.barcode for c in result.candidates if c.barcode]
     if barcodes:
         lines.append(f"Barcode:   [cyan]{escape(barcodes[0])}[/cyan]")
@@ -141,20 +151,36 @@ def item_panel(result: IdentifyResult, position: int, total: int) -> Panel:
 
 
 def candidates_table(issues: Sequence[object]) -> Table:
-    """Numbered table of issue matches for quick [1-N] selection."""
+    """Numbered table of issue matches with clickable GCD web links for quick [1-N] selection."""
     table = Table(title="Catalogue Matches", show_header=True, header_style="bold green")
     table.add_column("#", justify="right", style="bold yellow")
-    table.add_column("Series Title")
+    table.add_column("Series (Year)")
     table.add_column("Issue #", justify="center")
     table.add_column("Publisher")
     table.add_column("On-Sale Date")
+    table.add_column("GCD Web Link")
 
     for idx, issue in enumerate(issues, start=1):
+        series_name = getattr(issue, "series", getattr(issue, "series_name", ""))
+        series_year = getattr(issue, "series_year", None)
+        series_text = f"{series_name} ({series_year})" if series_year else series_name
+        issue_number = getattr(issue, "issue_number", getattr(issue, "number", ""))
+        publisher = getattr(issue, "publisher", getattr(issue, "publisher_name", ""))
+        on_sale = str(getattr(issue, "on_sale_date", "") or "—")
+
+        gcd_id = getattr(issue, "gcd_id", None)
+        if gcd_id:
+            gcd_url = f"https://www.comics.org/issue/{gcd_id}/"
+            link_cell = f"[link={gcd_url}]comics.org/issue/{gcd_id}[/link]"
+        else:
+            link_cell = "—"
+
         table.add_row(
             str(idx),
-            escape(getattr(issue, "series_name", "")),
-            escape(getattr(issue, "number", "")),
-            escape(getattr(issue, "publisher_name", "")),
-            escape(str(getattr(issue, "on_sale_date", "") or "—")),
+            escape(series_text),
+            escape(str(issue_number)),
+            escape(str(publisher)),
+            escape(on_sale),
+            link_cell,
         )
     return table
