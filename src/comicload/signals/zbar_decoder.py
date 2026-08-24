@@ -31,28 +31,33 @@ from comicload.signals.ean5 import decode_ean5  # noqa: E402
 def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
     """Decode UPC/EAN barcodes from cover photo bytes using pyzbar.
 
-    Tries full cover image first. If raw decode yields 0 symbols (common on bagged
-    comics with sleeve glare), evaluates regional corner crops with 3x upscaling
-    and histogram equalization.
+    Tries full cover image and rotations (0°, 90°, 180°, 270°) to handle vertical
+    and upside-down barcodes. If raw decode yields 0 symbols (common on bagged comics
+    with sleeve glare), evaluates regional corner crops with 3x upscaling and histogram
+    equalization.
     """
     raw_image = Image.open(io.BytesIO(image_bytes))
     image = ImageOps.exif_transpose(raw_image)
 
-    found_symbols: list[Any] = list(pyzbar.decode(image))
+    found_symbols: list[Any] = []
     decoded_from: Image.Image = image
 
-    if not found_symbols:
-        w, h = image.size
+    for angle in (0, 90, 180, 270):
+        oriented = image if angle == 0 else image.rotate(angle, expand=True)
+        symbols = list(pyzbar.decode(oriented))
+        if symbols:
+            found_symbols = symbols
+            decoded_from = oriented
+            break
+
+        w, h = oriented.size
         crop_regions = [
-            image.crop((int(w * 0.6), int(h * 0.6), w, h)),
-            image.crop((0, int(h * 0.6), int(w * 0.4), h)),
-            image.crop((0, 0, int(w * 0.4), int(h * 0.4))),
-            image.crop((0, int(h * 0.5), w, h)),
+            oriented.crop((int(w * 0.6), int(h * 0.6), w, h)),
+            oriented.crop((0, int(h * 0.6), int(w * 0.4), h)),
+            oriented.crop((0, 0, int(w * 0.4), int(h * 0.4))),
+            oriented.crop((0, int(h * 0.5), w, h)),
         ]
         for region in crop_regions:
-            # Equalize first without resizing — high-DPI sources decode as-is, and
-            # upscaling them past zbar's sweet spot loses the read. The 3x upscale
-            # remains as the second attempt for genuinely small regions.
             attempts = (
                 ImageOps.equalize(region.convert("L")),
                 ImageOps.equalize(
@@ -62,12 +67,15 @@ def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
                 ),
             )
             for attempt in attempts:
-                found_symbols = list(pyzbar.decode(attempt))
-                if found_symbols:
+                symbols = list(pyzbar.decode(attempt))
+                if symbols:
+                    found_symbols = symbols
                     decoded_from = attempt
                     break
             if found_symbols:
                 break
+        if found_symbols:
+            break
 
     found: list[DecodedBarcode] = []
     main_symbol: Any = None
