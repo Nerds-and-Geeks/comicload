@@ -57,6 +57,7 @@ class Issue:
     printing: str | None = None
     series_year: int | None = None
     """Year the series began — how collectors tell Superman (1939) from Superman (2023)."""
+    variant: str | None = None
 
     @property
     def gcd_url(self) -> str:

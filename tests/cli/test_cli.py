@@ -413,11 +413,37 @@ def test_an_unknown_signal_name_is_a_message_not_a_traceback(tmp_path, monkeypat
     photos = tmp_path / "photos"
     photos.mkdir()
 
-    result = runner.invoke(app, ["scan", str(photos), "--out", str(tmp_path / "out.csv")])
-
+    gcd_db = tmp_path / "gcd.sqlite"
+    runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(gcd_db)])
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            str(photos),
+            "--out",
+            str(tmp_path / "o.csv"),
+            "--db",
+            str(gcd_db),
+        ],
+    )
     assert result.exit_code != 0
     assert "telepathy" in result.stdout
-    assert "signals.enabled" in result.stdout
+    assert "Traceback" not in result.stdout
+
+
+def test_status_command_prints_dashboard_panel(tmp_path):
+    catalogue_db = tmp_path / "comicload.sqlite"
+    gcd_db = tmp_path / "gcd.sqlite"
+    runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(gcd_db)])
+
+    result = runner.invoke(
+        app,
+        ["status", "--db", str(gcd_db), "--catalogue-db", str(catalogue_db)],
+    )
+
+    assert result.exit_code == 0
+    assert "Status & Collection Summary" in result.stdout
+    assert "Collection Identified" in result.stdout
 
 
 def test_scan_wires_a_real_decoder_into_the_barcode_signal(tmp_path, monkeypatch):

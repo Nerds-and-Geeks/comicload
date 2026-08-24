@@ -157,6 +157,7 @@ def candidates_table(issues: Sequence[object]) -> Table:
     table.add_column("Series (Year)")
     table.add_column("Issue #", justify="center")
     table.add_column("Publisher")
+    table.add_column("Variant / Notes")
     table.add_column("On-Sale Date")
     table.add_column("GCD Web Link")
 
@@ -166,6 +167,7 @@ def candidates_table(issues: Sequence[object]) -> Table:
         series_text = f"{series_name} ({series_year})" if series_year else series_name
         issue_number = getattr(issue, "issue_number", getattr(issue, "number", ""))
         publisher = getattr(issue, "publisher", getattr(issue, "publisher_name", ""))
+        variant = getattr(issue, "variant", "") or getattr(issue, "printing", "") or "—"
         on_sale = str(getattr(issue, "on_sale_date", "") or "—")
 
         gcd_id = getattr(issue, "gcd_id", None)
@@ -180,7 +182,36 @@ def candidates_table(issues: Sequence[object]) -> Table:
             escape(series_text),
             escape(str(issue_number)),
             escape(str(publisher)),
+            escape(str(variant)),
             escape(on_sale),
             link_cell,
         )
     return table
+
+
+def status_panel(
+    confirmed_count: int,
+    quarantine_count: int,
+    catalogue_path: Path,
+    catalog_path: Path,
+) -> Panel:
+    """Rich panel showing collection & quarantine statistics."""
+    cat_size = (
+        f"{catalogue_path.stat().st_size / 1024:.1f} KB" if catalogue_path.exists() else "0 KB"
+    )
+    gcd_size = (
+        f"{catalog_path.stat().st_size / (1024 * 1024):.1f} MB" if catalog_path.exists() else "0 MB"
+    )
+
+    lines = [
+        f"Collection Identified:  [bold green]{confirmed_count}[/bold green] comic(s)",
+        f"Quarantine Pending:     [bold yellow]{quarantine_count}[/bold yellow] comic(s)",
+        "",
+        f"Collection Database:    {escape(str(catalogue_path))} ({cat_size})",
+        f"Comic Metadata DB:      {escape(str(catalog_path))} ({gcd_size})",
+    ]
+    return Panel(
+        "\n".join(lines),
+        title="comicload Status & Collection Summary",
+        border_style="cyan",
+    )

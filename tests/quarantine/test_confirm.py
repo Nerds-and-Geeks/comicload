@@ -96,3 +96,82 @@ def test_confirm_records_a_full_entry_and_releases_the_pixels():
     assert "signal=human" in confirmed.entry.tags
     assert confirmed.image is None
     assert repo.saved == [confirmed]
+
+
+def test_lookup_collapses_indistinguishable_variant_covers():
+    """Found against real data: 'Superman #27' resolved to 25 GCD rows, one per
+    variant cover printing — same publisher/series/issue/date on every one, distinct
+    only by a barcode digit we don't display or track. LoCG can't match on the
+    variant anyway (design decision from day one), so showing 25 identical-looking
+    lines and asking a person to guess between them is worse than useless."""
+    variants = [
+        Issue(
+            gcd_id=n,
+            publisher="DC",
+            series="Superman",
+            issue_number="27",
+            on_sale_date=date(2025, 6, 25),
+            series_year=2023,
+        )
+        for n in range(100, 108)
+    ]
+    resolver = StubResolver(variants)
+    service = ConfirmService(resolver, RecordingRepo())
+
+    results = service.lookup("superman 27")
+
+    assert len(results) == 1
+    assert results[0].series == "Superman"
+
+
+def test_lookup_keeps_genuinely_different_issues_separate():
+    """Same series+issue text can legitimately mean different real comics — a
+    reprint with a different on-sale date, or (rarer) two different publishers
+    using the same series name. Only rows identical on every LoCG-relevant field
+    collapse; anything that actually differs must still be shown."""
+    same_run = Issue(
+        gcd_id=1,
+        publisher="DC",
+        series="Superman",
+        issue_number="27",
+        on_sale_date=date(2025, 6, 25),
+        series_year=2023,
+    )
+    reprint = Issue(
+        gcd_id=2,
+        publisher="DC",
+        series="Superman",
+        issue_number="27",
+        on_sale_date=date(2025, 7, 30),
+        series_year=2023,
+    )
+    resolver = StubResolver([same_run, same_run, reprint])
+    service = ConfirmService(resolver, RecordingRepo())
+
+    results = service.lookup("superman 27")
+
+    assert len(results) == 2
+    assert {r.on_sale_date for r in results} == {date(2025, 6, 25), date(2025, 7, 30)}
+
+
+def test_lookup_preserves_order_of_first_occurrence():
+    older = Issue(
+        gcd_id=1,
+        publisher="DC",
+        series="Superman",
+        issue_number="27",
+        on_sale_date=date(2025, 6, 25),
+    )
+    newer = Issue(
+        gcd_id=2,
+        publisher="DC",
+        series="Superman",
+        issue_number="27",
+        on_sale_date=date(2025, 7, 30),
+    )
+    resolver = StubResolver([older, older, newer])
+    service = ConfirmService(resolver, RecordingRepo())
+
+    results = service.lookup("superman 27")
+
+    assert [r.gcd_id for r in results] == [1, 2]

@@ -19,6 +19,7 @@ from comicload.cli.render import (
     import_panel,
     item_panel,
     open_cover_image,
+    status_panel,
     summary_table,
 )
 from comicload.cli.wiring import get_default_barcode_decoder
@@ -149,10 +150,47 @@ def scan(
 
     pending = [r for r in results if r.bucket is not Bucket.CONFIDENT]
     if pending:
-        console.print(
-            f"\n[yellow]Quarantined {len(pending)}.[/yellow] "
-            "Run [bold]comicload review[/bold] to see them."
+        console.print(f"\n[yellow]Quarantined {len(pending)} comic(s) needing review.[/yellow]")
+        import sys
+
+        if sys.stdin.isatty():
+            if typer.confirm("Launch Review Wizard now?", default=True):
+                review(db=db, catalogue_db=catalogue_db, out=out)
+        else:
+            console.print("Run [bold]comicload review[/bold] to see them.")
+
+
+@app.command()
+def status(
+    db: Annotated[Path | None, typer.Option("--db", help="Path of the metadata database.")] = None,
+    catalogue_db: Annotated[
+        Path | None,
+        typer.Option("--catalogue-db", help="Path of your catalogue of scan results."),
+    ] = None,
+) -> None:
+    """Display status & summary of your comic collection and quarantine items."""
+    config = load_config()
+    catalogue_path = catalogue_db or config.catalogue_db_path()
+    catalog_path = db or config.gcd_db_path()
+
+    confirmed_count = 0
+    quarantine_count = 0
+    if catalogue_path.exists():
+        try:
+            repo = SqliteRepository(catalogue_path)
+            confirmed_count = len(repo.confirmed_entries())
+            quarantine_count = len(repo.pending_review())
+        except Exception:
+            pass
+
+    console.print(
+        status_panel(
+            confirmed_count=confirmed_count,
+            quarantine_count=quarantine_count,
+            catalogue_path=catalogue_path,
+            catalog_path=catalog_path,
         )
+    )
 
 
 @app.command(name="import")

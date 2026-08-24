@@ -45,12 +45,31 @@ class ConfirmService:
         self._repository = repository
 
     def lookup(self, text: str) -> list[Issue]:
-        """Issues matching what the person typed, best first. Empty if nothing matches."""
+        """Issues matching what the person typed, best first. Empty if nothing matches.
+
+        Collapses rows identical on every field LoCG import actually uses. A single
+        issue with several variant covers is many rows in the metadata catalogue —
+        one per printing — but LoCG cannot match on the variant (see the design
+        notes), so a person picking an identification has nothing to tell those
+        rows apart by. Rows differing only in gcd_id and printing are the same
+        choice; anything else that differs (a later reprint's on-sale date, for
+        instance) is a real difference and stays separate.
+        """
         parsed = parse_query(text)
         if parsed is None:
             return []
         candidate, scope = parsed
-        return self._resolver.resolve(candidate, scope)
+        issues = self._resolver.resolve(candidate, scope)
+
+        seen: set[tuple[str, str, str, object]] = set()
+        deduped: list[Issue] = []
+        for issue in issues:
+            key = (issue.publisher, issue.series, issue.issue_number, issue.on_sale_date)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(issue)
+        return deduped
 
     def confirm(self, result: IdentifyResult, issue: Issue) -> IdentifyResult:
         """Record the person's identification. The pixels are released — the comic is known."""
