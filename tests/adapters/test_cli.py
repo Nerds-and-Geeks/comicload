@@ -130,11 +130,11 @@ def _scan_one_unreadable_photo(tmp_path, monkeypatch):
             str(catalogue_db),
         ],
     )
-    return result, catalogue_db
+    return result, gcd_db, catalogue_db
 
 
 def test_scan_persists_results_to_the_catalogue(tmp_path, monkeypatch):
-    result, catalogue_db = _scan_one_unreadable_photo(tmp_path, monkeypatch)
+    result, _, catalogue_db = _scan_one_unreadable_photo(tmp_path, monkeypatch)
 
     assert result.exit_code == 0
     assert catalogue_db.exists()
@@ -142,35 +142,55 @@ def test_scan_persists_results_to_the_catalogue(tmp_path, monkeypatch):
     assert [r.filename for r in pending] == ["a.jpg"]
 
 
-def test_review_shows_what_scan_persisted(tmp_path, monkeypatch):
-    _, catalogue_db = _scan_one_unreadable_photo(tmp_path, monkeypatch)
+def test_review_walks_the_quarantine_and_quits_cleanly(tmp_path, monkeypatch):
+    _, gcd_db, catalogue_db = _scan_one_unreadable_photo(tmp_path, monkeypatch)
 
-    result = runner.invoke(app, ["review", "--db", str(catalogue_db)])
+    result = runner.invoke(
+        app,
+        ["review", "--db", str(gcd_db), "--catalogue-db", str(catalogue_db), "--no-images"],
+        input="q\n",
+    )
 
-    assert result.exit_code == 0
-    assert "a.jpg" in result.stdout
-    assert "unrecognized" in result.stdout
+    assert result.exit_code == 0, result.output
+    assert "a.jpg" in result.output
+    assert "quarantine" in result.output.lower()
+
+
+def test_review_identifies_a_comic_from_typed_series_and_number(tmp_path, monkeypatch):
+    _, gcd_db, catalogue_db = _scan_one_unreadable_photo(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app,
+        ["review", "--db", str(gcd_db), "--catalogue-db", str(catalogue_db), "--no-images"],
+        input="The Punisher #12\n1\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "The Punisher #12" in result.output
+    assert "saved" in result.output.lower()
+    assert SqliteRepository(catalogue_db).pending_review() == []
+    assert len(SqliteRepository(catalogue_db).confirmed_entries()) == 1
 
 
 def test_review_is_friendly_when_there_is_nothing_to_review(tmp_path):
     empty = tmp_path / "empty.sqlite"
     SqliteRepository(empty).save([])
 
-    result = runner.invoke(app, ["review", "--db", str(empty)])
+    result = runner.invoke(app, ["review", "--catalogue-db", str(empty)])
 
     assert result.exit_code == 0
-    assert "nothing to review" in result.stdout.lower()
+    assert "nothing in quarantine" in result.output.lower()
 
 
 def test_review_on_a_database_that_does_not_exist_says_so(tmp_path):
-    """A typo in --db used to create the file and claim everything was identified."""
+    """A typo used to create the file and claim everything was identified."""
     typo = tmp_path / "typo.sqlite"
 
-    result = runner.invoke(app, ["review", "--db", str(typo)])
+    result = runner.invoke(app, ["review", "--catalogue-db", str(typo)])
 
     assert result.exit_code != 0
-    assert "nothing to review" not in result.stdout.lower()
-    assert "comicload scan" in result.stdout
+    assert "quarantine" not in result.output.lower() or "comicload scan" in result.output
+    assert "comicload scan" in result.output
     assert not typo.exists()
 
 

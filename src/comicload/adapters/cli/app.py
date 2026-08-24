@@ -11,7 +11,12 @@ from rich.markup import escape
 import comicload.infra.signals  # noqa: F401  (registers signals)
 import comicload.infra.sinks  # noqa: F401  (registers sinks)
 from comicload.adapters.cli.progress import RichProgressReporter
-from comicload.adapters.cli.render import console, import_panel, review_table, summary_table
+from comicload.adapters.cli.render import (
+    console,
+    cover_lines,
+    import_panel,
+    summary_table,
+)
 from comicload.adapters.cli.wiring import get_default_barcode_decoder
 from comicload.core.errors import ComicloadError
 from comicload.core.models import Bucket, IdentifyResult, Scope
@@ -22,6 +27,7 @@ from comicload.infra.secrets import KeyringSecretStore
 from comicload.infra.sinks.csv_sink import CsvSink, read_csv, validate_csv
 from comicload.infra.storage.factory import open_repository, open_resolver
 from comicload.infra.storage.gcd_loader import load_dump
+from comicload.services.confirm import ConfirmService
 from comicload.services.export import ExportService
 from comicload.services.identify import IdentifyService
 
@@ -166,7 +172,7 @@ def scan(
     pending = [r for r in results if r.bucket is not Bucket.CONFIDENT]
     if pending:
         console.print(
-            f"\n[yellow]{len(pending)} photo(s) need a look.[/yellow] "
+            f"\n[yellow]Quarantined {len(pending)}.[/yellow] "
             "Run [bold]comicload review[/bold] to see them."
         )
 
@@ -217,24 +223,97 @@ def import_csv(
 def review(
     db: Annotated[
         str | None,
-        typer.Option("--db", help="Path or address of your own catalogue of scan results."),
+        typer.Option("--db", help="Path or address of the metadata database."),
     ] = None,
+    catalogue_db: Annotated[
+        str | None,
+        typer.Option(
+            "--catalogue-db", help="Path or address of your own catalogue of scan results."
+        ),
+    ] = None,
+    no_images: Annotated[
+        bool,
+        typer.Option("--no-images", help="Skip drawing covers in the terminal."),
+    ] = False,
 ) -> None:
-    """Look at the comics comicload could not identify on its own."""
-    catalogue = _as_dsn(db) if db else load_config().catalogue_dsn()
+    """Identify the quarantined comics yourself — the covers are shown one by one."""
+    config = load_config()
+    catalogue = _as_dsn(catalogue_db) if catalogue_db else config.catalogue_dsn()
+    catalog = _as_dsn(db) if db else config.catalog_dsn()
     try:
-        pending = open_repository(catalogue).pending_review()
+        repository = open_repository(catalogue)
+        pending = repository.pending_review()
     except ComicloadError as exc:
         raise _fail(str(exc)) from exc
 
     if not pending:
         console.print(
-            "[green]Nothing to review.[/green] Every photo comicload has seen was "
+            "[green]Nothing in quarantine.[/green] Every photo comicload has seen was "
             "identified — run [bold]comicload scan[/bold] on a folder to add more."
         )
         return
 
-    console.print(review_table(pending))
+    try:
+        service = ConfirmService(open_resolver(catalog), repository)
+    except ComicloadError as exc:
+        raise _fail(str(exc)) from exc
+
+    console.print(
+        f"[bold]{len(pending)} comic(s) in quarantine.[/bold] "
+        "Type what you can see on each cover, e.g. [bold]Superman #35[/bold].\n"
+    )
+    identified = 0
+    for position, result in enumerate(pending, start=1):
+        console.rule(f"{position} of {len(pending)} — {escape(result.filename)}")
+        if result.image and not no_images:
+            console.print(cover_lines(result.image), highlight=False)
+        hints = [c for c in result.candidates if c.barcode]
+        if hints:
+            console.print(f"[dim]barcode read: {escape(hints[0].barcode or '')}[/dim]")
+
+        while True:
+            answer = typer.prompt(
+                "Who is this? (series #number, s=skip, q=quit)", default="s"
+            ).strip()
+            if answer.lower() == "q":
+                console.print(f"\n[green]Identified {identified}[/green] this session.")
+                return
+            if answer.lower() in ("s", ""):
+                break
+
+            issues = service.lookup(answer)
+            if not issues:
+                console.print(
+                    "[yellow]Nothing in the catalogue matches that.[/yellow] "
+                    "Check the spelling, or press s to skip."
+                )
+                continue
+
+            for index, issue in enumerate(issues, start=1):
+                date_text = issue.on_sale_date.isoformat() if issue.on_sale_date else "date unknown"
+                console.print(
+                    f"  [bold]{index}[/bold]  {escape(issue.publisher)} · "
+                    f"{escape(issue.series)} #{escape(issue.issue_number)} · {date_text}"
+                )
+            choice = typer.prompt("Which one? (number, or s to search again)", default="1").strip()
+            if choice.lower() == "s":
+                continue
+            if not choice.isdigit() or not 1 <= int(choice) <= len(issues):
+                console.print("[yellow]That was not one of the numbers.[/yellow]")
+                continue
+
+            confirmed = service.confirm(result, issues[int(choice) - 1])
+            assert confirmed.entry is not None
+            console.print(
+                f"[green]✔ {escape(confirmed.entry.full_title)}[/green] saved to your catalogue.\n"
+            )
+            identified += 1
+            break
+
+    console.print(
+        f"\n[green]Identified {identified}[/green] of {len(pending)}. "
+        "Re-run [bold]comicload scan[/bold] or export again to refresh your CSV."
+    )
 
 
 @catalog_app.command("sync")
