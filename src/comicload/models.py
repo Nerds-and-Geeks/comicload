@@ -64,17 +64,20 @@ class Issue:
         return f"https://www.comics.org/issue/{self.gcd_id}/"
 
     def to_catalog_entry(self) -> CatalogEntry:
+        # Clean series name for LoCG importer (e.g. " - The Deluxe Edition" -> " - Deluxe Edition")
+        series = self.series.replace(" - The Deluxe Edition", " - Deluxe Edition").strip()
+
         # Clean issue number: strip dual legacy parens like "20 (863)" -> "20"
         num = self.issue_number.split("(")[0].strip() if self.issue_number else ""
 
         # Format full_title for League of Comic Geeks CSV importer:
         # 1. Unnumbered trades/graphic novels ([nn]) omit issue number
         # 2. Omit "1st Printing" printing suffixes from full_title (breaks LoCG matchers)
-        title = self.series if not num or num == "[nn]" else f"{self.series} #{num}"
+        title = series if not num or num == "[nn]" else f"{series} #{num}"
 
         return CatalogEntry(
             publisher_name=self.publisher,
-            series_name=self.series,
+            series_name=series,
             full_title=title,
             release_date=self.on_sale_date,
         )
