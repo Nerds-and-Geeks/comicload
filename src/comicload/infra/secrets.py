@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import keyring
+import keyring.errors
+
 SERVICE = "comicload"
 
 
@@ -15,7 +18,6 @@ class KeyringSecretStore:
     def get(self, name: str) -> str | None:
         if self._backend is not None:
             return self._backend.get(name)
-        import keyring
 
         return keyring.get_password(SERVICE, name)
 
@@ -23,7 +25,6 @@ class KeyringSecretStore:
         if self._backend is not None:
             self._backend[name] = value
             return
-        import keyring
 
         keyring.set_password(SERVICE, name, value)
 
@@ -31,8 +32,6 @@ class KeyringSecretStore:
         if self._backend is not None:
             self._backend.pop(name, None)
             return
-        import keyring
-        import keyring.errors
 
         try:
             keyring.delete_password(SERVICE, name)

@@ -17,6 +17,7 @@ from comicload.core.models import Bucket, IdentifyResult, Scope
 from comicload.core.registry import get_signal
 from comicload.infra.config import Config, load_config, save_config, sqlite_path
 from comicload.infra.photos import LocalFolderPhotoSource
+from comicload.infra.secrets import KeyringSecretStore
 from comicload.infra.sinks.csv_sink import CsvSink, read_csv, validate_csv
 from comicload.infra.storage.factory import open_repository, open_resolver
 from comicload.infra.storage.gcd_loader import load_dump
@@ -259,8 +260,6 @@ def config_keys(
     name: Annotated[str, typer.Argument(help="Which key to store, e.g. comicload/anthropic.")],
 ) -> None:
     """Store an API key in your system keychain. It is never written to a file."""
-    from comicload.infra.secrets import KeyringSecretStore
-
     value = typer.prompt("Value", hide_input=True)
     KeyringSecretStore().set(name, value)
     console.print(f"[green]Saved[/green] {escape(name)} to your keychain.")
