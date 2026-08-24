@@ -550,3 +550,40 @@ need OCR or cover matching. Can ship after Phase 1, ahead of Phases 2-3.
 2. **Publisher/series naming alignment.** GCD strings will not match LoCG's vocabulary by default (LoCG uses `Marvel Knights`, an imprint, and `The Punisher` with article). A normalization table is needed. The user's LoCG collection is currently empty, so it cannot serve as ground-truth vocabulary — the table must be built from GCD and refined against import failures.
 3. **UPC supplement schemes per publisher.** Marvel and DC differ. Needs documenting from real barcodes during Phase 1.
 4. **CLI naming** — `import`/`--import-locg` vs `scan`/`--push-locg`.
+
+---
+
+## Web review (2026-08-24)
+
+`comicload review --web`. Local FastAPI + uvicorn server on `127.0.0.1`, serving one
+static HTML page; browser opens automatically, server exits on close or Ctrl+C.
+Localhost-only, no auth — matches every other localhost-only assumption in this
+project. Optional extra: `comicload[web]`.
+
+**Why:** the terminal wizard's numbered-candidate-list flow was directly reported
+as difficult — cover and candidates aren't visible together, one exact-match text
+query with no browsing fallback, and no way to back out of a confirmation without
+restarting review from the top.
+
+**API calls `ConfirmService`/`Repository` directly — no new domain logic, only a
+new adapter.** This is principle 6 (hexagonal architecture) actually paying off:
+`identification/service.py` and `quarantine/service.py` have zero CLI coupling
+today, verified before starting this feature.
+
+**Two real behavior changes, not just presentation:**
+
+1. **Series-only browsing.** `SqliteIssueResolver` already resolves a series-only
+   candidate (no issue number) to every issue in that series. The CLI's
+   `ConfirmService.lookup()` requires a trailing issue number in the typed query;
+   the web API accepts series alone and returns the full dated list. Solves "my
+   first guess at the series name was close but I couldn't browse."
+2. **Undo within a session.** `ConfirmService.confirm()` today clears the cover
+   image immediately on success. The web session keeps it until the session ends
+   explicitly, so a confirmation can be reversed and reconsidered — not just
+   skipped — without losing the cover to look at again. CLI behavior (image
+   cleared immediately) is unchanged; this is additive.
+
+**Scope:** review only. Not a general catalogue browser, not multi-user, not a
+deployment target. If comicload ever needs a real web *offering* (not just a
+better review tool), it is a new adapter beside this one, not a rewrite of it —
+same as the CLI/web split principle 6 was written for in the first place.
