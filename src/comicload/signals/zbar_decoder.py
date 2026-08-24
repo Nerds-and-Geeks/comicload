@@ -50,6 +50,17 @@ def pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
             decoded_from = oriented
             break
 
+        # Equalizing the whole frame is cheap next to cropping-and-upscaling, and
+        # catches low-contrast scans (glare, thin ink) the crop ladder below exists
+        # for anyway — trying it before spending time on four separate crops finds
+        # those pages faster and without ever needing the expensive path.
+        equalized_full = ImageOps.equalize(oriented.convert("L"))
+        symbols = list(pyzbar.decode(equalized_full))
+        if symbols:
+            found_symbols = symbols
+            decoded_from = equalized_full
+            break
+
         w, h = oriented.size
         crop_regions = [
             oriented.crop((int(w * 0.6), int(h * 0.6), w, h)),

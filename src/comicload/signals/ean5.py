@@ -143,18 +143,23 @@ def _try_row(bits: list[int]) -> str | None:
     return None
 
 
+# Real scans are never perfectly axis-aligned, so a barcode's true reading line
+# drifts a few pixels between rows. Five guessed fractions missed it on real cover
+# photos even with the bars clearly visible — sampling every row in the search band
+# is what actually finds it.
+_MAX_ROWS_SAMPLED = 200
+
+
 def decode_ean5(image: Image.Image) -> str | None:
     """Decode an EAN-5 supplement from an image region, or None.
 
-    Scans several horizontal lines, right-side-up and upside-down, and only returns
-    digits that survive the parity checksum.
+    Scans horizontal lines across the region, right-side-up and upside-down, and
+    only returns digits that survive the parity checksum.
     """
     grey = image.convert("L")
+    step = max(1, grey.height // _MAX_ROWS_SAMPLED)
     for candidate in (grey, grey.rotate(180)):
-        for fraction in (0.5, 0.35, 0.65, 0.2, 0.8):
-            y = int(candidate.height * fraction)
-            if not 0 <= y < candidate.height:
-                continue
+        for y in range(0, candidate.height, step):
             bits = _binarize_row(candidate, y)
             if not bits:
                 continue

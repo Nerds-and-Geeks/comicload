@@ -112,3 +112,17 @@ def test_rejects_a_corrupt_checksum():
         x += 4
     # all-L parity means checksum must be... whatever PARITY maps to LLLLL — nothing does
     assert decode_ean5(img) is None
+
+
+def test_decodes_a_slightly_skewed_real_scan_five_fixed_rows_missed():
+    """Real scanner output is never perfectly axis-aligned. Five guessed sampling
+    fractions missed a barcode with clearly legible, high-contrast bars because
+    none of the five happened to land on a clean reading line; every-row scanning
+    must find it."""
+    img = render("00111", module_px=4, height=300)
+    # simulate a slight skew by shearing a few rows out of alignment — approximate
+    # with a resize that nudges vertical scale so fixed fractions drift off-row
+    from PIL import Image as PILImage
+
+    skewed = img.resize((img.width, 287), PILImage.Resampling.NEAREST)
+    assert decode_ean5(skewed) == "00111"
