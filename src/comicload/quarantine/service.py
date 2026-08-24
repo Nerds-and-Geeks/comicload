@@ -15,26 +15,36 @@ from comicload.models import Bucket, Candidate, IdentifyResult, Issue, Scope
 from comicload.ports import IssueResolver, Repository
 
 # "Superman #35", "superman 35 2014", "Alex + Ada #2" — series, issue, optional year
-_QUERY = re.compile(
+_WITH_NUMBER = re.compile(
     r"^\s*(?P<series>.+?)\s*#?\s*(?P<number>\d[\w.½]*)"
     r"(?:\s+(?P<year>(?:18|19|20)\d{2}))?\s*$"
 )
+# "Superman Brainiac" — no trailing number at all. Collected editions and trades
+# carry issue_number "[nn]" in GCD, not a real number, so a query for one can never
+# match _WITH_NUMBER; this is the fallback, tried only when that one doesn't match.
+_SERIES_ONLY = re.compile(r"^\s*(?P<series>\S.*?)\s*$")
 
 
 def parse_query(text: str) -> tuple[Candidate, Scope] | None:
     """Turn what a person typed into a lookup candidate plus a narrowing scope."""
-    match = _QUERY.match(text)
-    if not match:
-        return None
-    candidate = Candidate(
-        signal="human",
-        confidence=1.0,
-        series=match.group("series"),
-        issue_number=match.group("number"),
-    )
-    year = match.group("year")
-    scope = Scope(year_from=int(year), year_to=int(year)) if year else Scope()
-    return candidate, scope
+    match = _WITH_NUMBER.match(text)
+    if match:
+        candidate = Candidate(
+            signal="human",
+            confidence=1.0,
+            series=match.group("series"),
+            issue_number=match.group("number"),
+        )
+        year = match.group("year")
+        scope = Scope(year_from=int(year), year_to=int(year)) if year else Scope()
+        return candidate, scope
+
+    match = _SERIES_ONLY.match(text)
+    if match:
+        candidate = Candidate(signal="human", confidence=1.0, series=match.group("series"))
+        return candidate, Scope()
+
+    return None
 
 
 class ConfirmService:

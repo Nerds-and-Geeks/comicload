@@ -106,12 +106,20 @@ class SqliteIssueResolver:
             return self._query(sql, (candidate.series, candidate.issue_number))
 
         if candidate.series:
+            # Every typed word must appear somewhere in the name, not the whole
+            # phrase contiguously: a person typing what they read off a cover
+            # writes "Superman Brainiac" for a series GCD stores as "Superman:
+            # Brainiac" — the colon breaks a single substring match even though
+            # a human would call these the same query.
+            words = candidate.series.split()
+            clauses = " AND ".join("s.name LIKE ? COLLATE NOCASE" for _ in words)
             sql = (
-                f"{_SELECT} WHERE s.name = ? COLLATE NOCASE "
+                f"{_SELECT} WHERE {clauses} "
                 "ORDER BY (i.on_sale_date IS NULL OR i.on_sale_date = ''), "
                 f"i.on_sale_date DESC, i.id LIMIT {_MAX_MATCHES}"
             )
-            return self._query(sql, (candidate.series,))
+            params = tuple(f"%{word}%" for word in words)
+            return self._query(sql, params)
 
         return []
 

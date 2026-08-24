@@ -62,8 +62,18 @@ def test_parse_trailing_year_narrows_the_scope():
     assert scope.year_to == 2025
 
 
-def test_parse_rejects_number_free_text():
-    assert parse_query("no idea") is None
+def test_parse_accepts_number_free_text_as_a_series_search():
+    """'no idea' is a legitimate (if unlikely to match) series-only query now —
+    only truly empty input is rejected. A bad guess should return zero results
+    from lookup(), not be refused before it even reaches the catalogue."""
+    candidate, _ = parse_query("no idea")
+    assert candidate.series == "no idea"
+    assert candidate.issue_number is None
+
+
+def test_parse_rejects_empty_input():
+    assert parse_query("") is None
+    assert parse_query("   ") is None
 
 
 def test_lookup_routes_through_the_resolver():
@@ -73,8 +83,8 @@ def test_lookup_routes_through_the_resolver():
     assert resolver.saw.series == "Superman"
 
 
-def test_lookup_of_unparseable_text_is_empty_not_an_error():
-    assert ConfirmService(StubResolver([ISSUE]), RecordingRepo()).lookup("???") == []
+def test_lookup_of_empty_text_is_empty_not_an_error():
+    assert ConfirmService(StubResolver([ISSUE]), RecordingRepo()).lookup("   ") == []
 
 
 def test_confirm_records_a_full_entry_and_releases_the_pixels():
@@ -175,3 +185,35 @@ def test_lookup_preserves_order_of_first_occurrence():
     results = service.lookup("superman 27")
 
     assert [r.gcd_id for r in results] == [1, 2]
+
+
+def test_parse_accepts_a_series_alone_no_issue_number():
+    """Collected editions carry issue_number '[nn]' in GCD, not a real number.
+    Typing 'Superman Brainiac' must not require a trailing digit that doesn't exist."""
+    candidate, scope = parse_query("Superman Brainiac")
+    assert candidate.series == "Superman Brainiac"
+    assert candidate.issue_number is None
+    assert scope.year_from is None
+
+
+def test_parse_still_prefers_a_trailing_number_when_present():
+    candidate, _ = parse_query("Superman #35")
+    assert candidate.series == "Superman"
+    assert candidate.issue_number == "35"
+
+
+def test_lookup_finds_a_collected_edition_by_title_alone():
+    edition = Issue(
+        gcd_id=99,
+        publisher="DC",
+        series="Superman: Brainiac",
+        issue_number="[nn]",
+        on_sale_date=date(2023, 11, 7),
+    )
+    resolver = StubResolver([edition])
+    service = ConfirmService(resolver, RecordingRepo())
+
+    results = service.lookup("Superman Brainiac")
+
+    assert results == [edition]
+    assert resolver.saw.issue_number is None

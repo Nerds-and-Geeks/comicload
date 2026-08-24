@@ -218,3 +218,35 @@ def test_dated_matches_outrank_undated_reprints(tmp_path):
     )
     assert issues[0].publisher == "DC"
     assert issues[0].on_sale_date is not None
+
+
+def test_series_only_lookup_matches_a_substring_not_just_exact(tmp_path):
+    """Found against real data: GCD's real series is 'Superman: Brainiac', but a
+    person typing what they read off the cover writes 'Superman Brainiac' — no
+    colon. An exact match rejects every real query a human actually types."""
+    db = build_db(
+        tmp_path / "gcd.sqlite",
+        [(1, "[nn]", "2023-11-07")],
+        series="Superman: Brainiac",
+    )
+    resolver = SqliteIssueResolver(db)
+
+    candidate = Candidate(signal="human", confidence=1.0, series="Superman Brainiac")
+    issues = resolver.resolve(candidate, Scope())
+
+    assert len(issues) == 1
+    assert issues[0].series == "Superman: Brainiac"
+
+
+def test_series_only_lookup_still_works_case_insensitively(tmp_path):
+    db = build_db(tmp_path / "gcd.sqlite", [(1, "1", "2020-01-01")], series="Detective Comics")
+    resolver = SqliteIssueResolver(db)
+    candidate = Candidate(signal="human", confidence=1.0, series="detective")
+    assert len(resolver.resolve(candidate, Scope())) == 1
+
+
+def test_series_only_lookup_does_not_match_an_unrelated_series(tmp_path):
+    db = build_db(tmp_path / "gcd.sqlite", [(1, "1", "2020-01-01")], series="Detective Comics")
+    resolver = SqliteIssueResolver(db)
+    candidate = Candidate(signal="human", confidence=1.0, series="Action Comics")
+    assert resolver.resolve(candidate, Scope()) == []
