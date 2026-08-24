@@ -412,6 +412,45 @@ Phase 1 is deliberately the whole pipeline at reduced accuracy rather than a fra
 
 ---
 
+## Planned: collection gap analysis
+
+`comicload gaps collection.csv --out wishlist.csv`
+
+Reads an existing collection CSV, looks up each owned series in the local GCD mirror,
+and reports which issues are missing from otherwise-continuous runs.
+
+**Dependency order:** needs only the CSV format and the GCD mirror, both of which land in
+Phase 1. It does **not** depend on OCR or cover matching, so it can ship immediately after
+Phase 1 rather than queueing behind Phases 2-3.
+
+**Output reuses the existing sink.** LoCG's format carries an `In Wish List` column, so a
+must-buy list is the same 14-column CSV with `In Collection=0, In Wish List=1`. `CsvSink`
+is unchanged, and the result imports back into LoCG as a real wishlist.
+
+**Scope — run gaps only.** Three readings of "complete my stories", only the first is
+promised:
+
+| Reading | Data needed | Status |
+|---|---|---|
+| Run gaps — own #1,2,3,5,6, need #4 | Series issue list from GCD | **In scope** |
+| Story arcs — own 5 of a 6-issue arc | Arc grouping; GCD story records do not group cleanly, Comic Vine is better | Needs research |
+| Crossovers — arc spanning several series | Crossover metadata | Out of scope |
+
+**New port required.** `IssueResolver` resolves a candidate to issues; gap analysis needs
+the inverse — every issue in a series. Add `SeriesCatalog.issues_in_series(series, publisher)
+-> list[Issue]` as a separate port rather than widening `IssueResolver`, keeping both
+interfaces single-purpose.
+
+**Heuristics, without which the output is noise:**
+- `--min-owned N` (default 3) — ignore series where you own too few issues to have a run
+- `--max-gap N` (default 5) — a 40-issue hole is not a gap, it means you do not own the run
+
+**Known hard part:** issue numbering is not integers. Annuals, `#0`, `#½`, `.1` issues, and
+volume restarts all break naive sorting. Ordering must come from GCD's own issue sequence,
+not from parsing the number string.
+
+---
+
 ## Open questions
 
 1. **Cover image licensing and bulk-fetch policy.** Blocks Phase 3. `docs.comics.org` returned 403 to automated fetch; needs manual review of their terms.
