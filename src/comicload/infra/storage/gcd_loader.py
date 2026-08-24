@@ -60,7 +60,7 @@ CREATE TABLE issue (
 INDEXES = """
 CREATE INDEX idx_issue_barcode ON issue(barcode);
 CREATE INDEX idx_series_name ON series(name COLLATE NOCASE);
-CREATE INDEX idx_issue_series ON issue(series_id);
+CREATE INDEX idx_issue_series_number ON issue(series_id, number);
 CREATE INDEX idx_series_publisher ON series(publisher_id);
 CREATE INDEX idx_publisher_name ON publisher(name COLLATE NOCASE);
 """
