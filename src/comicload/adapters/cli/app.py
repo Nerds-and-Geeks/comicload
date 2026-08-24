@@ -77,10 +77,21 @@ def _report_signal_failures(results: Sequence[IdentifyResult]) -> None:
 def _scope(publisher: str | None, years: str | None) -> Scope:
     year_from = year_to = None
     if years:
-        parts = years.split("-")
-        if len(parts) != 2 or not all(p.strip().isdigit() for p in parts):
-            raise typer.BadParameter("--years must look like 1970-1985")
-        year_from, year_to = int(parts[0]), int(parts[1])
+        raw = years.strip()
+        parts = [p.strip() for p in raw.split("-")]
+        if len(parts) == 1 and parts[0].isdigit():
+            year_from = year_to = int(parts[0])
+        elif (
+            len(parts) == 2
+            and (parts[0].isdigit() or parts[0] == "")
+            and (parts[1].isdigit() or parts[1] == "")
+        ):
+            year_from = int(parts[0]) if parts[0].isdigit() else None
+            year_to = int(parts[1]) if parts[1].isdigit() else None
+            if year_from is not None and year_to is not None and year_from > year_to:
+                year_from, year_to = year_to, year_from
+        else:
+            raise typer.BadParameter("--years must look like 1970-1985 or 1980")
     return Scope(publisher=publisher, year_from=year_from, year_to=year_to)
 
 

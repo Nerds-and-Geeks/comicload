@@ -49,12 +49,19 @@ def _row(entry: CatalogEntry) -> dict[str, str]:
 
 
 def _entry(row: dict[str, str]) -> CatalogEntry:
-    raw_date = row.get("Release Date") or ""
+    raw_date = (row.get("Release Date") or "").strip()
+    release_date: date | None = None
+    if raw_date:
+        try:
+            release_date = date.fromisoformat(raw_date)
+        except ValueError:
+            release_date = None
+
     return CatalogEntry(
         publisher_name=row.get("Publisher Name", ""),
         series_name=row.get("Series Name", ""),
         full_title=row.get("Full Title", ""),
-        release_date=date.fromisoformat(raw_date) if raw_date else None,
+        release_date=release_date,
         in_collection=row.get("In Collection") == "1",
         in_wish_list=row.get("In Wish List") == "1",
         marked_read=row.get("Marked Read") == "1",

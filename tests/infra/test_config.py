@@ -61,6 +61,21 @@ def test_year_range_parses_into_scope():
     assert config.scan.year_bounds() == (1970, 1985)
 
 
+def test_year_range_supports_single_year_open_ended_and_inverted():
+    config = Config()
+    config.scan.default_years = "1980"
+    assert config.scan.year_bounds() == (1980, 1980)
+
+    config.scan.default_years = "1985-1970"
+    assert config.scan.year_bounds() == (1970, 1985)
+
+    config.scan.default_years = "1970-"
+    assert config.scan.year_bounds() == (1970, None)
+
+    config.scan.default_years = "-1985"
+    assert config.scan.year_bounds() == (None, 1985)
+
+
 def test_blank_year_range_is_unbounded():
     assert Config().scan.year_bounds() == (None, None)
 

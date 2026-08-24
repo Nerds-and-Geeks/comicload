@@ -60,6 +60,16 @@ def test_roundtrip_read_csv(tmp_path):
     assert read_csv(out) == [ENTRY]
 
 
+def test_read_csv_handles_malformed_release_dates_resiliently(tmp_path):
+    out = tmp_path / "malformed.csv"
+    out.write_text(
+        ",".join(COLUMNS) + "\nMarvel,The Punisher,The Punisher #12,NOT_A_DATE,1,0,0,,,,,,,\n"
+    )
+    entries = read_csv(out)
+    assert len(entries) == 1
+    assert entries[0].release_date is None
+
+
 def test_validate_accepts_good_file(tmp_path):
     out = tmp_path / "out.csv"
     CsvSink(out).push([ENTRY])

@@ -38,10 +38,23 @@ class ScanConfig(BaseModel):
         raw = self.default_years.strip()
         if not raw:
             return (None, None)
-        parts = raw.split("-")
-        if len(parts) != 2 or not all(p.strip().isdigit() for p in parts):
-            raise ValueError(f"default_years must look like '1970-1985', got {raw!r}")
-        return (int(parts[0]), int(parts[1]))
+        parts = [p.strip() for p in raw.split("-")]
+        if len(parts) == 1 and parts[0].isdigit():
+            y = int(parts[0])
+            return (y, y)
+        if (
+            len(parts) == 2
+            and (parts[0].isdigit() or parts[0] == "")
+            and (parts[1].isdigit() or parts[1] == "")
+        ):
+            if not parts[0] and not parts[1]:
+                return (None, None)
+            y_from = int(parts[0]) if parts[0].isdigit() else None
+            y_to = int(parts[1]) if parts[1].isdigit() else None
+            if y_from is not None and y_to is not None and y_from > y_to:
+                y_from, y_to = y_to, y_from
+            return (y_from, y_to)
+        raise ValueError(f"default_years must look like '1970-1985' or '1980', got {raw!r}")
 
 
 class SignalsConfig(BaseModel):
