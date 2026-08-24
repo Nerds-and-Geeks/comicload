@@ -457,44 +457,43 @@ two now is speculative.
 - Sync only arcs touching series the user actually owns, not the whole database.
 - Run as a background job, never blocking a command.
 
-### LLM-assisted arc discovery
+### Arc resolution pipeline — Comic Vine grounds the LLM
 
-Comic Vine's coverage is thin for older material, where arc membership is often documented in
-prose (wikis, reading-order sites) rather than any structured API. An LLM with web search
-closes that gap.
+Comic Vine and the LLM are **composed, not parallel**. Comic Vine supplies structured records;
+the LLM reasons over them. Each stage does what it is actually good at:
 
-**The LLM proposes; GCD verifies.** This is the governing rule:
+| Stage | Role | Why this stage |
+|---|---|---|
+| **Comic Vine** | Fetch structured records — issue numbers, dates, series names, arc stubs — for the series and issues in play | Facts, not judgment. Grounds everything downstream in real data. |
+| **LLM** | Assemble arc membership and reading order across series from those records, plus the user's owned issues | Judgment over material documented in prose that no API exposes |
+| **GCD** | Verify every proposed issue exists in the local mirror | Free, local, fails closed |
 
-1. LLM returns a proposed issue list for an arc
-2. **Every proposed issue is looked up in the local GCD mirror**
-3. Issues with no GCD match are discarded, not surfaced
+```
+owned issues (CSV)
+  → Comic Vine: fetch records for their series and linked arcs
+  → build LLM context from those records + what the user owns
+  → LLM: assemble arc membership + reading order, spanning series
+  → GCD: verify every proposed issue exists; discard those that do not
+  → cache permanently
+  → diff against owned → must-buy list
+```
 
-The LLM is never an authority on what exists — only a hypothesis generator about what belongs
-together. Verification is free because GCD is local, and a hallucinated issue fails closed
-rather than landing in the user's wishlist.
+**Why grounding matters more than verification.** An ungrounded LLM recalls arc membership
+from training and invents plausible issue numbers. The same model handed Comic Vine's actual
+records is selecting and ordering rather than recalling — a far smaller error surface.
 
-Results are cached permanently alongside Comic Vine's, behind the same `StoryArcCatalog` port,
-so the source of an arc definition is invisible to callers.
+**Verification is retained anyway.** Grounding reduces hallucination; it does not eliminate
+extrapolation past the supplied records. GCD lookup costs nothing because it is local, and an
+unverifiable issue is dropped rather than surfaced.
 
-**Surface fit:** per-query LLM latency is wrong for a CLI. The services layer is already
-job-shaped (principle 6), so a web adapter runs arc discovery asynchronously without any
-service change. In the CLI this is an explicit opt-in command that populates the cache, not
-something that runs during `storylines`.
+**Caching is permanent.** Arc definitions are effectively immutable. A resolved arc is never
+re-queried, which keeps both the Comic Vine rate limit and LLM spend to a one-time cost per
+arc.
 
-### Accepted costs
-
-**This command is not offline.** Every other comicload command runs with no network. Arc
-data cannot. Mitigation is caching arcs into the same local SQLite and refreshing by delta,
-making it network-once rather than network-per-query — but the offline property is genuinely
-broken for this one feature and is stated rather than hidden.
-
-**The join between catalogs is the hard part.** Three vocabularies are in play: the CSV
-carries LoCG's strings, GCD has its own, Metron a third. Linking them is the real work.
-
-- **Modern comics: barcode is the join key.** GCD and Metron both carry barcodes, so the
-  link is exact and reuses the Phase 1 barcode signal.
-- **Pre-barcode comics:** fuzzy series + issue matching, with the same weakness as elsewhere
-  in the system. Unjoined issues are reported as unresolved rather than silently skipped.
+**Surface fit:** per-arc LLM latency is wrong for a blocking CLI command. The services layer is
+already job-shaped (principle 6), so a web adapter runs resolution asynchronously with no
+service change. In the CLI it is an explicit cache-populating command, not something that runs
+inside `storylines`.
 
 ### Architecture
 
@@ -506,9 +505,9 @@ class StoryArcCatalog(Protocol):
     def issues_in_arc(self, arc_id: str) -> list[Issue]: ...
 ```
 
-Implementations: `ComicVineArcCatalog`, `LlmArcCatalog` (proposals verified against GCD),
-and a `CachedArcCatalog` decorator holding the local SQLite cache. Callers cannot tell which
-source produced an arc. API keys go through the existing `SecretStore`
+One implementation, `GroundedArcCatalog`, running the Comic Vine → LLM → GCD-verify pipeline,
+wrapped in a `CachedArcCatalog` decorator holding the local SQLite cache. Callers see only the
+port; the pipeline's stages are internal. API keys go through the existing `SecretStore`
 port into the OS keychain — the mechanism already specified under principle 8.
 
 Output reuses `CsvSink` unchanged: LoCG's format carries an `In Wish List` column, so the
