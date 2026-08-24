@@ -3,12 +3,18 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
 from comicload.core.models import Bucket, Candidate, IdentifyResult, ImportResult
 
 console = Console()
+
+# Everything here interpolates values the user chose: filenames, folder names, series
+# titles. Rich reads square brackets as markup, so `Batman [red]variant.jpg` would print
+# as `Batman variant.jpg` and `a[/bold]b.jpg` would raise MarkupError. Every one of these
+# values goes through escape() before it reaches a renderable.
 
 
 def _best_guess(candidate: Candidate | None) -> str:
@@ -22,7 +28,7 @@ def _best_guess(candidate: Candidate | None) -> str:
         )
         if part
     ]
-    return " ".join(parts) or candidate.barcode or "—"
+    return escape(" ".join(parts) or candidate.barcode or "—")
 
 
 def summary_table(results: Sequence[IdentifyResult]) -> Table:
@@ -46,7 +52,7 @@ def review_table(results: Sequence[IdentifyResult]) -> Table:
     table.add_column("Best guess")
     for result in results:
         best = result.candidates[0] if result.candidates else None
-        table.add_row(result.filename, result.bucket.value, _best_guess(best))
+        table.add_row(escape(result.filename), escape(result.bucket.value), _best_guess(best))
     return table
 
 
@@ -55,9 +61,10 @@ def import_panel(result: ImportResult) -> Panel:
         f"Comics sent:   [bold]{result.total}[/bold]",
         f"Matched:       [green]{result.matched}[/green]",
         f"Not matched:   [yellow]{result.unmatched}[/yellow]",
-        f"Destination:   {result.destination}",
+        f"Destination:   {escape(result.destination)}",
     ]
     if result.view_url:
         lines.append("")
-        lines.append(f"View your collection: [link={result.view_url}]{result.view_url}[/link]")
+        url = escape(result.view_url)
+        lines.append(f"View your collection: [link={url}]{url}[/link]")
     return Panel("\n".join(lines), title="Import complete", border_style="green")
