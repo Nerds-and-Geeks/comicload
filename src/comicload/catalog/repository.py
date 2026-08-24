@@ -75,20 +75,20 @@ class SqliteIssueResolver:
 
     def resolve(self, candidate: Candidate, scope: Scope | None = None) -> list[Issue]:
         if candidate.barcode:
-            sql = f"{_SELECT} WHERE i.barcode = ? ORDER BY i.id LIMIT {_MAX_MATCHES}"
-            issues = self._query(sql, (candidate.barcode,))
-            if not issues and len(candidate.barcode) >= 12:
-                bare_upc = candidate.barcode[:12]
-                upper = bare_upc[:-1] + chr(ord(bare_upc[-1]) + 1)
-                prefix_sql = (
-                    f"{_SELECT} WHERE (i.barcode = ? OR (i.barcode >= ? AND i.barcode < ?)) "
-                    f"ORDER BY i.id LIMIT {_MAX_MATCHES}"
-                )
-                issues = self._query(prefix_sql, (bare_upc, bare_upc, upper))
-                if len(issues) > 1 and candidate.issue_number:
-                    filtered = [i for i in issues if i.issue_number == candidate.issue_number]
-                    if filtered:
-                        return filtered
+            clean_bc = candidate.barcode.replace(" ", "").replace("-", "")
+            bare_upc = clean_bc[:12] if len(clean_bc) >= 12 else clean_bc
+            sql = f"""
+            {_SELECT}
+            WHERE i.barcode = ?
+               OR REPLACE(REPLACE(i.barcode, ' ', ''), '-', '') = ?
+               OR REPLACE(REPLACE(i.barcode, ' ', ''), '-', '') LIKE ?
+            ORDER BY i.id LIMIT {_MAX_MATCHES}
+            """
+            issues = self._query(sql, (candidate.barcode, clean_bc, f"{bare_upc}%"))
+            if len(issues) > 1 and candidate.issue_number:
+                filtered = [i for i in issues if i.issue_number == candidate.issue_number]
+                if filtered:
+                    return filtered
             return issues
 
         if candidate.series and candidate.issue_number:
