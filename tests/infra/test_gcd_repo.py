@@ -205,6 +205,15 @@ def test_a_missing_database_is_reported_when_it_is_used(tmp_path):
         resolver.resolve(CANDIDATE, Scope())
 
 
+def test_a_zero_byte_database_raises_catalog_error(tmp_path):
+    empty_db = tmp_path / "empty.sqlite"
+    empty_db.touch()
+    resolver = SqliteIssueResolver(empty_db)
+
+    with pytest.raises(CatalogError, match="catalog sync"):
+        resolver.resolve(CANDIDATE, Scope())
+
+
 # --- the resolver reports the catalogue, not its own input ---------------------
 
 

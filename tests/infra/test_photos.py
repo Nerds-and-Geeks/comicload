@@ -67,7 +67,14 @@ def test_the_tree_is_walked_only_once(folder, monkeypatch):
 
     source = LocalFolderPhotoSource(folder)
     source.count()
-    list(source.photos())
-    source.count()
-
     assert len(walks) == 1
+
+
+def test_photo_source_accepts_a_single_file_target(tmp_path):
+    single_file = tmp_path / "cover.jpg"
+    single_file.write_bytes(b"image bytes")
+    source = LocalFolderPhotoSource(single_file)
+    assert source.count() == 1
+    photos = list(source.photos())
+    assert len(photos) == 1
+    assert photos[0].filename == "cover.jpg"

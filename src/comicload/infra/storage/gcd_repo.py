@@ -85,13 +85,20 @@ class SqliteIssueResolver:
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
-            if not self._db_path.exists():
+            if not self._db_path.exists() or self._db_path.stat().st_size == 0:
                 raise CatalogError(
                     f"no metadata catalogue at {self._db_path}; run 'comicload catalog sync' first"
                 )
             conn = sqlite3.connect(self._db_path)
             conn.row_factory = sqlite3.Row  # rows are read by column name, never by position
             conn.create_function(_YEAR_FUNCTION, 1, _year_of, deterministic=True)
+            try:
+                conn.execute("SELECT 1 FROM issue LIMIT 1")
+            except sqlite3.OperationalError as exc:
+                conn.close()
+                raise CatalogError(
+                    f"no metadata catalogue at {self._db_path}; run 'comicload catalog sync' first"
+                ) from exc
             self._conn = conn
         return self._conn
 

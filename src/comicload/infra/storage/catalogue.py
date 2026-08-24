@@ -132,7 +132,7 @@ class SqliteRepository:
         been scanned yet. Creating one on the way past would turn a typo into an empty
         catalogue and an affirmative "everything was identified".
         """
-        if not create and not self._db_path.exists():
+        if not create and (not self._db_path.exists() or self._db_path.stat().st_size == 0):
             raise CatalogError(
                 f"no catalogue at {self._db_path}\n"
                 "Run 'comicload scan' on a folder of photos first — or check that path, "

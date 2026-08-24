@@ -27,6 +27,9 @@ class LocalFolderPhotoSource:
             return self._cached
         if not self._root.exists():
             raise FileNotFoundError(f"photo folder does not exist: {self._root}")
+        if self._root.is_file():
+            self._cached = [self._root] if self._root.suffix.lower() in SUPPORTED_SUFFIXES else []
+            return self._cached
         self._cached = sorted(
             path
             for path in self._root.rglob("*")

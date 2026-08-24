@@ -157,6 +157,13 @@ def test_pending_review_on_a_missing_database_raises_rather_than_creating_one(tm
     assert not missing.exists()
 
 
+def test_pending_review_on_a_zero_byte_database_raises_catalog_error(tmp_path):
+    empty = tmp_path / "empty.sqlite"
+    empty.touch()
+    with pytest.raises(CatalogError, match="no catalogue"):
+        SqliteRepository(empty).pending_review()
+
+
 def test_confirmed_entries_on_a_missing_database_raises_rather_than_creating_one(tmp_path):
     missing = tmp_path / "typo.sqlite"
     with pytest.raises(CatalogError, match="comicload scan"):
