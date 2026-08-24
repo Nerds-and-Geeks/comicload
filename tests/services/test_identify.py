@@ -1,3 +1,6 @@
+import pytest
+
+from comicload.core.errors import ComicloadError
 from comicload.core.models import Bucket, Candidate, Issue, Photo, Scope
 from comicload.services.identify import IdentifyService
 
@@ -139,3 +142,45 @@ def test_entry_tags_record_provenance():
     entry = service.run(StubSource([PHOTO]), Scope())[0].entry
     assert "barcode" in entry.tags
     assert "one.jpg" in entry.tags
+
+
+# --- a swallowed signal failure must still be counted -------------------------
+
+
+class Exploding:
+    name = "boom"
+
+    def identify(self, photo, scope):
+        raise RuntimeError("signal crashed")
+
+
+def test_swallowed_signal_failure_is_counted_on_the_result():
+    service = IdentifyService(signals=[Exploding()], resolver=StubResolver({}))
+
+    results = service.run(StubSource([PHOTO, Photo("p2", b"y", "two.jpg")]), Scope())
+
+    assert [r.signal_failures for r in results] == [("boom",), ("boom",)]
+    assert all(r.bucket is Bucket.UNRECOGNIZED for r in results)
+
+
+def test_healthy_run_records_no_signal_failures():
+    candidate = Candidate(signal="barcode", confidence=0.95, barcode="B1")
+    service = IdentifyService(
+        signals=[StubSignal("barcode", [candidate])],
+        resolver=StubResolver({"B1": [ISSUE]}),
+    )
+    assert service.run(StubSource([PHOTO]), Scope())[0].signal_failures == ()
+
+
+def test_a_deliberate_comicload_error_stops_the_run():
+    """A missing library is true of every photo — it is not a per-photo failure."""
+
+    class NoLibrary:
+        name = "barcode"
+
+        def identify(self, photo, scope):
+            raise ComicloadError("zbar is not installed")
+
+    service = IdentifyService(signals=[NoLibrary()], resolver=StubResolver({}))
+    with pytest.raises(ComicloadError, match="zbar"):
+        service.run(StubSource([PHOTO]), Scope())

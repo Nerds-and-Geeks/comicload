@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated
 
@@ -11,7 +13,7 @@ import comicload.infra.sinks  # noqa: F401  (registers sinks)
 from comicload.adapters.cli.progress import RichProgressReporter
 from comicload.adapters.cli.render import console, import_panel, review_table, summary_table
 from comicload.core.errors import ComicloadError
-from comicload.core.models import Bucket, Scope
+from comicload.core.models import Bucket, IdentifyResult, Scope
 from comicload.core.registry import get_signal
 from comicload.infra.config import Config, load_config, save_config, sqlite_path
 from comicload.infra.photos import LocalFolderPhotoSource
@@ -44,6 +46,25 @@ def _as_dsn(value: str) -> str:
     if "://" in value:
         return value
     return f"sqlite://{Path(value).expanduser()}"
+
+
+def _report_signal_failures(results: Sequence[IdentifyResult]) -> None:
+    """Say when a signal broke, instead of passing its silence off as 'not recognised'."""
+    if not results:
+        return
+    counts = Counter(name for result in results for name in result.signal_failures)
+    for name, count in sorted(counts.items()):
+        if count == len(results):
+            console.print(
+                f"\n[red]The '{escape(name)}' signal failed on all {count} photo(s).[/red] "
+                "Nothing above was really examined — these comics are not 'not recognised', "
+                "they were never read. Fix the error above and scan again."
+            )
+        else:
+            console.print(
+                f"\n[yellow]The '{escape(name)}' signal failed on {count} of "
+                f"{len(results)} photo(s).[/yellow] Those photos were not fully examined."
+            )
 
 
 def _scope(publisher: str | None, years: str | None) -> Scope:
@@ -103,6 +124,7 @@ def scan(
         open_repository(catalogue).save(results)
 
     console.print(summary_table(results))
+    _report_signal_failures(results)
 
     result = ExportService(CsvSink(out)).export(results)
     console.print(import_panel(result))

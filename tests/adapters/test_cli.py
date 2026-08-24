@@ -2,7 +2,9 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+import comicload.adapters.cli.app as app_module
 from comicload.adapters.cli.app import app
+from comicload.core.errors import ComicloadError
 from comicload.infra.sinks.csv_sink import COLUMNS
 from comicload.infra.storage.catalogue import SqliteRepository
 
@@ -82,8 +84,18 @@ def test_config_show_prints_current_settings(tmp_path):
 # --- beyond the brief: the review queue now has a database behind it (Task 14) ---
 
 
-def _scan_one_unreadable_photo(tmp_path):
+class _BlindSignal:
+    """A signal that reads nothing — an unreadable photo, without needing a real decoder."""
+
+    name = "barcode"
+
+    def identify(self, photo, scope):
+        return []
+
+
+def _scan_one_unreadable_photo(tmp_path, monkeypatch):
     """Scan a folder holding one photo no signal can read, and return the paths used."""
+    monkeypatch.setattr(app_module, "get_signal", lambda name, **kw: _BlindSignal())
     photos = tmp_path / "photos"
     photos.mkdir()
     (photos / "a.jpg").write_bytes(b"not really a jpeg")
@@ -107,8 +119,8 @@ def _scan_one_unreadable_photo(tmp_path):
     return result, catalogue_db
 
 
-def test_scan_persists_results_to_the_catalogue(tmp_path):
-    result, catalogue_db = _scan_one_unreadable_photo(tmp_path)
+def test_scan_persists_results_to_the_catalogue(tmp_path, monkeypatch):
+    result, catalogue_db = _scan_one_unreadable_photo(tmp_path, monkeypatch)
 
     assert result.exit_code == 0
     assert catalogue_db.exists()
@@ -116,8 +128,8 @@ def test_scan_persists_results_to_the_catalogue(tmp_path):
     assert [r.filename for r in pending] == ["a.jpg"]
 
 
-def test_review_shows_what_scan_persisted(tmp_path):
-    _, catalogue_db = _scan_one_unreadable_photo(tmp_path)
+def test_review_shows_what_scan_persisted(tmp_path, monkeypatch):
+    _, catalogue_db = _scan_one_unreadable_photo(tmp_path, monkeypatch)
 
     result = runner.invoke(app, ["review", "--db", str(catalogue_db)])
 
@@ -131,3 +143,64 @@ def test_review_is_friendly_when_there_is_nothing_to_review(tmp_path):
 
     assert result.exit_code == 0
     assert "nothing to review" in result.stdout.lower()
+
+
+# --- a broken signal must not masquerade as "not recognised" ------------------
+
+
+class _BrokenSignal:
+    name = "barcode"
+
+    def identify(self, photo, scope):
+        raise RuntimeError("signal is broken")
+
+
+def test_scan_says_so_when_a_signal_failed_on_every_photo(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "get_signal", lambda name, **kw: _BrokenSignal())
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    (photos / "a.jpg").write_bytes(b"not really a jpeg")
+    (photos / "b.jpg").write_bytes(b"nor is this one")
+    gcd_db = tmp_path / "gcd.sqlite"
+    runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(gcd_db)])
+
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            str(photos),
+            "--out",
+            str(tmp_path / "out.csv"),
+            "--db",
+            str(gcd_db),
+            "--catalogue-db",
+            str(tmp_path / "comicload.sqlite"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "failed on all 2 photo(s)" in result.stdout
+
+
+def test_scan_reports_a_missing_native_library_instead_of_a_clean_tally(tmp_path, monkeypatch):
+    """No zbar means no photo was examined; the run must say so, not report 0 recognised."""
+
+    class _NoZbar:
+        name = "barcode"
+
+        def identify(self, photo, scope):
+            raise ComicloadError("comicload cannot read barcodes ... brew install zbar")
+
+    monkeypatch.setattr(app_module, "get_signal", lambda name, **kw: _NoZbar())
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    (photos / "a.jpg").write_bytes(b"not really a jpeg")
+    gcd_db = tmp_path / "gcd.sqlite"
+    runner.invoke(app, ["catalog", "sync", str(FIXTURE), "--db", str(gcd_db)])
+
+    result = runner.invoke(
+        app, ["scan", str(photos), "--out", str(tmp_path / "out.csv"), "--db", str(gcd_db)]
+    )
+
+    assert result.exit_code != 0
+    assert "brew install zbar" in result.stdout

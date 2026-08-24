@@ -1,5 +1,10 @@
+import sys
+
+import pytest
+
+from comicload.core.errors import ComicloadError
 from comicload.core.models import Photo, Scope
-from comicload.infra.signals.barcode import BarcodeSignal, decode_supplement
+from comicload.infra.signals.barcode import BarcodeSignal, _pyzbar_decoder, decode_supplement
 
 
 class StubDecoder:
@@ -68,3 +73,34 @@ def test_signal_is_registered():
     from comicload.core.registry import available_signals
 
     assert "barcode" in available_signals()
+
+
+# --- a missing native library is not "this photo could not be read" ------------
+
+
+def test_missing_zbar_library_is_reported_not_swallowed():
+    """Without zbar every photo fails; the user must be told to install it."""
+
+    def no_zbar(image_bytes: bytes):
+        raise ImportError("Unable to find zbar shared library")
+
+    signal = BarcodeSignal(decoder=no_zbar)
+    with pytest.raises(ComicloadError, match="brew install zbar"):
+        signal.identify(Photo(id="1", data=b"x", filename="a.jpg"), Scope())
+
+
+def test_decoder_raises_comicload_error_when_pyzbar_cannot_be_imported(monkeypatch):
+    monkeypatch.setitem(sys.modules, "pyzbar", None)
+    monkeypatch.setitem(sys.modules, "pyzbar.pyzbar", None)
+    with pytest.raises(ComicloadError, match="zbar"):
+        _pyzbar_decoder(b"not an image")
+
+
+def test_an_unreadable_photo_still_yields_no_candidates_rather_than_raising():
+    """The per-photo case must keep working: one corrupt file cannot stop a whole box."""
+
+    def corrupt(image_bytes: bytes):
+        raise OSError("cannot identify image file")
+
+    signal = BarcodeSignal(decoder=corrupt)
+    assert signal.identify(Photo(id="1", data=b"x", filename="a.jpg"), Scope()) == []

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 from collections.abc import Callable, Sequence
+from typing import Any
 
+from comicload.core.errors import ComicloadError
 from comicload.core.models import Candidate, Photo, Scope
 from comicload.core.registry import register_signal
 
@@ -32,9 +34,28 @@ def decode_supplement(supplement: str) -> tuple[str | None, str | None]:
     return (issue, printing)
 
 
+MISSING_ZBAR = (
+    "comicload cannot read barcodes because zbar, the library that does the reading, "
+    "is not installed.\n"
+    "Install it and scan again:\n"
+    "    macOS:          brew install zbar\n"
+    "    Debian/Ubuntu:  sudo apt install libzbar0"
+)
+
+
+def _import_pyzbar() -> Any:
+    """Import pyzbar lazily, and say what to install when its native library is absent."""
+    try:
+        from pyzbar import pyzbar
+    except (ImportError, OSError) as exc:  # zbar itself is missing, not just the wheel
+        raise ComicloadError(f"{MISSING_ZBAR}\n\n({exc})") from exc
+    return pyzbar
+
+
 def _pyzbar_decoder(image_bytes: bytes) -> Sequence[DecodedBarcode]:
     from PIL import Image
-    from pyzbar import pyzbar
+
+    pyzbar = _import_pyzbar()
 
     image = Image.open(io.BytesIO(image_bytes))
     found: list[DecodedBarcode] = []
@@ -57,6 +78,10 @@ class BarcodeSignal:
 
     The full barcode string is the payload; the catalogue matches it directly.
     Supplement decoding only narrows when that direct match fails.
+
+    A photo this signal cannot read yields no candidates. A *library* it cannot load is
+    a different thing entirely — that would fail on every photo in the run — so it
+    raises ComicloadError naming what to install instead of returning nothing.
     """
 
     name = "barcode"
@@ -67,8 +92,12 @@ class BarcodeSignal:
     def identify(self, photo: Photo, scope: Scope) -> list[Candidate]:
         try:
             decoded = self._decode(photo.data)
+        except ComicloadError:
+            raise  # a missing library breaks every photo; do not hide it as "not read"
+        except ImportError as exc:
+            raise ComicloadError(f"{MISSING_ZBAR}\n\n({exc})") from exc
         except Exception:
-            return []
+            return []  # this one photo is corrupt or unreadable; the rest may be fine
 
         candidates: list[Candidate] = []
         for main, supplement in decoded:

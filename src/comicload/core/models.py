@@ -103,6 +103,9 @@ class IdentifyResult:
     bucket: Bucket
     entry: CatalogEntry | None = None
     candidates: tuple[Candidate, ...] = ()
+    signal_failures: tuple[str, ...] = ()
+    """Signals that crashed on this photo. A run must not stop, but it must not lie either:
+    a signal that failed on every photo is a broken install, not a shelf of odd comics."""
 
 
 @dataclass(frozen=True, slots=True)
