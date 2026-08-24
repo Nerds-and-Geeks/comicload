@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "comicload"
+version = "0.1.0"
+description = "Photograph comic covers, identify them, catalogue them in League of Comic Geeks"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "pydantic>=2.7",
+    "platformdirs>=4.2",
+    "keyring>=25.0",
+    "pillow>=10.3",
+    "pyzbar>=0.1.9",
+]
+
+[project.optional-dependencies]
+locg = ["playwright>=1.44"]
+dev = ["pytest>=8.2", "pytest-cov>=5.0", "ruff>=0.4", "mypy>=1.10"]
+
+[project.scripts]
+comicload = "comicload.adapters.cli.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/comicload"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/comicload"]
