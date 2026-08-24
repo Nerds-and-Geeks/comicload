@@ -47,3 +47,10 @@ files = ["src/comicload"]
 [[tool.mypy.overrides]]
 module = "pyzbar.*"
 ignore_missing_imports = true
+
+# The Playwright sink is Phase 4. The CLI imports it inside a try/except so that
+# `--import-locg` fails with an install instruction instead of a traceback; until the
+# module exists, mypy cannot resolve it.
+[[tool.mypy.overrides]]
+module = "comicload.infra.sinks.locg_sink"
+ignore_missing_imports = true
