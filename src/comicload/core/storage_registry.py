@@ -5,6 +5,7 @@ selected by name. Adding a backend requires no edit to any existing file.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, cast
@@ -33,9 +34,17 @@ repository_registry: dict[str, type] = {}
 resolver_registry: dict[str, type] = {}
 
 
+_WINDOWS_DRIVE = re.compile(r"^/[A-Za-z]:")
+
+
 def _expand_target(target: str) -> str:
-    """Expand a leading `~`, which `sqlite:///~/comicload.sqlite` leaves behind a slash."""
-    if target.startswith("/~"):
+    """Undo the slash the three-slash form leaves in front of `~` and of a drive letter.
+
+    `sqlite:///~/comicload.sqlite` and `sqlite:///C:/comics.db` are both how people write
+    these addresses; without this, the first stays literal and the second becomes the
+    nonexistent path `/C:/comics.db`.
+    """
+    if target.startswith("/~") or _WINDOWS_DRIVE.match(target):
         target = target[1:]
     return os.path.expanduser(target)
 
@@ -46,6 +55,11 @@ def parse_dsn(dsn: str) -> Dsn:
             f"storage address must include a scheme, e.g. 'sqlite:///path/to.db', got {dsn!r}"
         )
     scheme, _, target = dsn.partition("://")
+    if not target.strip():
+        raise ValueError(
+            f"storage address {dsn!r} names no location; write where the data lives, "
+            "e.g. 'sqlite:///path/to.db'"
+        )
     return Dsn(scheme=scheme.lower(), target=_expand_target(target))
 
 

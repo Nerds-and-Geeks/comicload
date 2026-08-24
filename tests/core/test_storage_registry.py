@@ -120,3 +120,21 @@ def test_mypy_rejects_a_call_the_repository_port_does_not_have(tmp_path, monkeyp
 
     assert status != 0, f"mypy accepted a call the Repository port does not have:\n{stdout}"
     assert "no_such_method" in stdout, stdout
+
+
+# --- addresses people actually type ------------------------------------------
+
+
+def test_parse_dsn_keeps_a_windows_drive_letter_usable():
+    """`sqlite:///C:/x.db` used to become the nonexistent path '/C:/x.db'."""
+    assert parse_dsn("sqlite:///C:/comics.db").target == "C:/comics.db"
+
+
+def test_parse_dsn_keeps_a_posix_absolute_path_absolute():
+    assert parse_dsn("sqlite:///tmp/comics.db").target == "/tmp/comics.db"
+
+
+def test_parse_dsn_rejects_an_address_with_no_location():
+    """`sqlite://` used to resolve to Path('.') — the current directory, silently."""
+    with pytest.raises(ValueError, match="names no location"):
+        parse_dsn("sqlite://")
