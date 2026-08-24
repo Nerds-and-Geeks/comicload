@@ -34,3 +34,39 @@ def test_id_is_content_hash_so_duplicates_collide(tmp_path):
 def test_missing_folder_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         LocalFolderPhotoSource(tmp_path / "nope").count()
+
+
+# --- one comic, photographed once, is one photo ------------------------------
+
+
+def test_byte_identical_files_yield_a_single_photo(tmp_path):
+    """Two copies of one file are one comic; yielding both counted it twice."""
+    (tmp_path / "one.jpg").write_bytes(b"same bytes")
+    (tmp_path / "two.jpg").write_bytes(b"same bytes")
+    (tmp_path / "three.jpg").write_bytes(b"different")
+
+    photos = list(LocalFolderPhotoSource(tmp_path).photos())
+
+    assert len(photos) == 2
+    assert len({photo.id for photo in photos}) == 2
+
+
+def test_the_tree_is_walked_only_once(folder, monkeypatch):
+    """count() and photos() are both called on every scan; walking twice doubles the wait."""
+    from pathlib import Path
+
+    walks = []
+    real_rglob = Path.rglob
+
+    def counting_rglob(self, pattern, *args, **kwargs):
+        walks.append(self)
+        return real_rglob(self, pattern, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "rglob", counting_rglob)
+
+    source = LocalFolderPhotoSource(folder)
+    source.count()
+    list(source.photos())
+    source.count()
+
+    assert len(walks) == 1
