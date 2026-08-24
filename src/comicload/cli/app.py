@@ -276,12 +276,14 @@ def catalog_sync(
     progress = RichProgressReporter()
     try:
         target = db or load_config().gcd_db_path()
-        progress.start(1, "Syncing database")
+        # total = dump size in bytes; the loader reports bytes consumed per statement,
+        # so the bar crawls through the whole file instead of sitting at a fake 100%.
+        progress.start(max(dump.stat().st_size, 1), "Reading the dump")
         try:
             counts = load_dump(
                 dump,
                 target,
-                on_progress=lambda batch: progress.advance(batch, "Loading rows"),
+                on_progress=lambda consumed: progress.advance(consumed, "building your database"),
             )
         finally:
             progress.finish()

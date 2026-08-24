@@ -375,8 +375,9 @@ def load_dump(
     """Load the tables comicload needs from a GCD MySQL dump into a local SQLite file.
 
     Returns the number of rows written per local table. Existing tables are dropped and
-    rebuilt, so reloading the same dump is idempotent. `on_progress` is called with the
-    number of rows in each batch as it lands — this layer never writes to the console.
+    rebuilt, so reloading the same dump is idempotent. `on_progress` is called with the number of
+    bytes of the dump consumed by each statement, so callers can show real progress
+    against the file size — this layer never writes to the console.
 
     Raises CatalogError if the dump is missing or truncated, if a table we need names
     none of the columns we need, or if the loaded rows do not join — all of which mean
@@ -389,7 +390,10 @@ def load_dump(
     # Build into a scratch file and swap it in only on success, so a failed sync can
     # never leave behind an empty or half-loaded mirror in place of a working one.
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    scratch = db_path.with_name(db_path.name + ".syncing")
+    # The pid makes the scratch unique per process: a second `catalog sync` started
+    # while one is running builds its own file instead of dropping tables inside the
+    # first one's — which, with journalling off, corrupted both.
+    scratch = db_path.with_name(f"{db_path.name}.syncing.{os.getpid()}")
     conn = sqlite3.connect(scratch)
     try:
         conn.execute("PRAGMA synchronous = OFF")
@@ -402,6 +406,10 @@ def load_dump(
         declared: dict[str, list[str]] = {}
 
         for statement in _iter_statements(sql_path):
+            if on_progress:
+                # every statement counts, kept or skipped: progress measures how much
+                # of the dump has been read, not how many rows we happened to keep
+                on_progress(len(statement))
             created = _create_table_columns(statement)
             if created is not None:
                 declared[created[0]] = created[1]
@@ -438,8 +446,6 @@ def load_dump(
             placeholders = ", ".join("?" * len(wanted))
             conn.executemany(f"INSERT OR REPLACE INTO {local_table} VALUES ({placeholders})", rows)
             counts[local_table] += len(rows)
-            if on_progress:
-                on_progress(len(rows))
 
         conn.executescript(INDEXES)
         _check_join(conn, counts)

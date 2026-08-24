@@ -283,10 +283,17 @@ def test_several_inserts_for_one_table_accumulate(tmp_path):
     assert load_dump(path, tmp_path / "gcd.sqlite")["publisher"] == 3
 
 
-def test_progress_reports_rows_as_they_load(tmp_path):
+def test_progress_reports_bytes_of_the_dump_including_skipped_tables(tmp_path):
+    """Progress measures how much of the file has been read, not how many rows were
+    kept — a sync spends most of its time in tables it skips, and a bar that only
+    moved on kept rows sat still long enough that users killed and retried the sync."""
     seen: list[int] = []
-    counts = load_dump(FIXTURE, tmp_path / "gcd.sqlite", on_progress=seen.append)
-    assert sum(seen) == sum(counts.values())
+    load_dump(FIXTURE, tmp_path / "gcd.sqlite", on_progress=seen.append)
+    reported = sum(seen)
+    file_size = FIXTURE.stat().st_size
+    # statements exclude inter-statement whitespace, so reported <= size, but the
+    # two must be the same order of magnitude for the bar to be honest
+    assert file_size * 0.8 <= reported <= file_size
 
 
 def test_a_failed_sync_leaves_the_previous_mirror_intact(tmp_path):
