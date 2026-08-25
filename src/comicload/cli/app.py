@@ -125,7 +125,9 @@ def scan(
         ),
     ] = False,
 ) -> None:
-    """Identify every comic photo in a folder and write an import file."""
+    if not folder.exists():
+        raise _fail(f"Folder does not exist: {folder}")
+
     config = load_config()
     catalog_path = db or config.gcd_db_path()
     catalogue_path = catalogue_db or config.catalogue_db_path()
